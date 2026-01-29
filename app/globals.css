@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@theme {
+  /* 直接在 theme 裡面定義變數 */
+  --color-app-bg: #ffffff;
+  --color-app-fg: #0f172a;
+}
+
+/* 使用 Tailwind 的變數，通常不需要 !important */
+@layer base {
+  body {
+    background-color: var(--color-app-bg);
+    color: var(--color-app-fg);
+    font-family: Arial, Helvetica, sans-serif;
+  }
+}
