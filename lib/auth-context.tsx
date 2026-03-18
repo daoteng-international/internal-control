@@ -12,6 +12,9 @@ interface UserProfile {
   displayName: string;
   role: string;
   status: string;
+  department?: string; // 🏢 新增：部門
+  phone?: string;      // 📱 新增：手機
+  extension?: string;  // ☎️ 新增：分機
 }
 
 interface AuthContextType {

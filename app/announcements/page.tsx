@@ -1,268 +1,326 @@
 "use client";
 
 import { useState, useEffect } from "react";
-// --- 引入 Firebase 功能 ---
 import { db } from "../../lib/firebase";
+import { useAuth } from "@/lib/auth-context"; // 💡 引入 Auth 以判斷人員所屬部門
 import { 
   collection, 
   query, 
   onSnapshot, 
   orderBy, 
   addDoc, 
-  serverTimestamp 
+  serverTimestamp,
+  doc,
+  deleteDoc,
+  updateDoc
 } from "firebase/firestore";
 
 // --- 類型定義 ---
 type Category = "重要" | "通知" | "更新";
-type TargetGroup = "全體同仁" | "營運" | "會計" | "遠端" | "數位部";
+type Status = "published" | "draft";
+type TargetDept = "全部" | "營運部" | "財務部" | "工務" | "遠端";
 
 interface Announcement {
   id: string;
   category: Category;
+  status: Status;
+  targetDepartment: TargetDept; // 💡 新增：發送對象部門
   title: string;
   content: string;
   author: string;
-  date: string;
-  targets: TargetGroup[];
+  date: any;
   isPinned: boolean;
 }
 
-// --- 1. 發佈公告彈窗 (連動 Firestore) ---
-function CreateAnnouncementModal({ 
+// --- 1. 發佈/編輯公告彈窗 ---
+function AnnouncementModal({ 
   show, 
   onClose, 
-  onSave 
+  onSave, 
+  initialData 
 }: { 
   show: boolean; 
   onClose: () => void; 
-  onSave: (data: any) => void 
+  onSave: (data: any, status: Status) => void;
+  initialData: Announcement | null;
 }) {
   const [formData, setFormData] = useState({
     title: "",
     category: "通知" as Category,
+    targetDepartment: "全部" as TargetDept, // 💡 預設發送給全部
     content: "",
-    targets: [] as TargetGroup[],
     isPinned: false
   });
 
-  const groups: TargetGroup[] = ["全體同仁", "營運", "會計", "遠端", "數位部"];
+  useEffect(() => {
+    if (initialData) {
+      setFormData({
+        title: initialData.title,
+        category: initialData.category,
+        targetDepartment: initialData.targetDepartment || "全部",
+        content: initialData.content,
+        isPinned: initialData.isPinned
+      });
+    } else {
+      setFormData({ title: "", category: "通知", targetDepartment: "全部", content: "", isPinned: false });
+    }
+  }, [initialData, show]);
 
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95">
-        <header className="p-6 border-b flex justify-between items-center bg-slate-50">
-          <h3 className="font-bold text-slate-800 tracking-tight">建立新公告 (管理權限)</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors text-xl">✕</button>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-slate-900/20 backdrop-blur-sm">
+      <div className="bg-white rounded-[2rem] shadow-xl w-full max-w-2xl overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200 font-sans">
+        <header className="px-8 py-5 border-b border-slate-50 flex justify-between items-center bg-white">
+          <h3 className="font-bold text-lg text-slate-700">{initialData ? "編輯公告" : "建立系統公告"}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">✕</button>
         </header>
 
         <div className="p-8 space-y-6">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-500 uppercase">公告類型</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">公告類型</label>
               <select 
-                className="w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                className="w-full border border-slate-100 rounded-xl p-2.5 text-sm outline-none focus:border-blue-500/50 bg-slate-50 font-bold cursor-pointer text-slate-700"
                 value={formData.category}
                 onChange={e => setFormData({...formData, category: e.target.value as Category})}
               >
-                <option value="重要">重要 (紅色標籤)</option>
-                <option value="通知">通知 (藍色標籤)</option>
-                <option value="更新">更新 (灰色標籤)</option>
+                <option value="重要">🔴 重要事項</option>
+                <option value="通知">🔵 一般通知</option>
+                <option value="更新">⚪ 系統更新</option>
               </select>
             </div>
-            <div className="space-y-1 text-right pt-6">
-              <label className="inline-flex items-center gap-2 cursor-pointer group">
-                <input 
-                  type="checkbox" 
-                  className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
-                  checked={formData.isPinned}
-                  onChange={e => setFormData({...formData, isPinned: e.target.checked})}
-                />
-                <span className="text-sm font-bold text-amber-600 group-hover:text-amber-700 transition-colors">置頂此公告</span>
-              </label>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">發送對象 (部門)</label>
+              <select 
+                className="w-full border border-slate-100 rounded-xl p-2.5 text-sm outline-none focus:border-blue-500/50 bg-slate-50 font-bold cursor-pointer text-slate-700"
+                value={formData.targetDepartment}
+                onChange={e => setFormData({...formData, targetDepartment: e.target.value as TargetDept})}
+              >
+                <option value="全部">📢 全部群組</option>
+                <option value="營運部">🏢 營運部</option>
+                <option value="財務部">💰 財務部</option>
+                <option value="工務">🛠️ 工務</option>
+                <option value="遠端">🏠 遠端</option>
+              </select>
             </div>
           </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">公告標題</label>
-            <input 
-              placeholder="請輸入清楚的標題..."
-              className="w-full border rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium"
-              value={formData.title}
-              onChange={e => setFormData({...formData, title: e.target.value})}
-            />
+          <div className="flex justify-end">
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input 
+                type="checkbox" 
+                className="w-4 h-4 rounded border-slate-200 text-amber-500 focus:ring-amber-500" 
+                checked={formData.isPinned} 
+                onChange={e => setFormData({...formData, isPinned: e.target.checked})} 
+              />
+              <span className="text-xs font-bold text-slate-500">置頂顯示</span>
+            </label>
           </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">發送群組 (可多選)</label>
-            <div className="flex flex-wrap gap-2 pt-1">
-              {groups.map(g => (
-                <button
-                  key={g}
-                  type="button"
-                  onClick={() => {
-                    const newTargets = formData.targets.includes(g)
-                      ? formData.targets.filter(t => t !== g)
-                      : [...formData.targets, g];
-                    setFormData({...formData, targets: newTargets});
-                  }}
-                  className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${
-                    formData.targets.includes(g) 
-                    ? "bg-slate-800 text-white border-slate-800 shadow-md scale-105" 
-                    : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
-                  }`}
-                >
-                  {g}
-                </button>
-              ))}
-            </div>
-          </div>
+          <input 
+            placeholder="請輸入標題..."
+            className="w-full border border-slate-100 rounded-xl p-3.5 text-sm outline-none focus:border-blue-500 font-bold bg-slate-50 transition-all text-slate-700"
+            value={formData.title}
+            onChange={e => setFormData({...formData, title: e.target.value})}
+          />
 
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">公告內容</label>
-            <textarea 
-              className="w-full border rounded-xl p-4 text-sm h-32 outline-none focus:ring-2 focus:ring-blue-500 resize-none bg-slate-50/50"
-              placeholder="請詳細說明事項內容..."
-              value={formData.content}
-              onChange={e => setFormData({...formData, content: e.target.value})}
-            />
-          </div>
+          <textarea 
+            className="w-full border border-slate-100 rounded-xl p-4 text-sm h-40 outline-none focus:border-blue-500 resize-none bg-slate-50 font-medium leading-relaxed text-slate-600"
+            placeholder="詳細說明事項內容..."
+            value={formData.content}
+            onChange={e => setFormData({...formData, content: e.target.value})}
+          />
         </div>
 
-        <footer className="p-6 border-t bg-slate-50 flex gap-3">
-          <button 
-            onClick={() => onSave(formData)}
-            className="flex-1 bg-blue-600 text-white py-3.5 rounded-2xl font-bold shadow-lg hover:bg-blue-700 transition-all active:scale-[0.98]"
-          >
-            立即發佈公告
-          </button>
-          <button onClick={onClose} className="px-6 py-3.5 bg-white border text-slate-500 rounded-2xl font-bold hover:bg-slate-50 transition-colors">取消</button>
+        <footer className="p-6 border-t border-slate-50 bg-slate-50/50 flex gap-3">
+          <button onClick={onClose} className="px-6 py-3 text-slate-400 font-bold text-sm hover:text-slate-600 transition-colors">取消</button>
+          <div className="flex-1 flex gap-2">
+            <button 
+              onClick={() => onSave(formData, "draft")} 
+              className="flex-1 bg-white border border-slate-200 text-slate-600 py-3 rounded-xl font-bold hover:bg-slate-100 transition-all text-sm shadow-sm"
+            >
+              儲存草稿
+            </button>
+            <button 
+              onClick={() => onSave(formData, "published")} 
+              className="flex-1 bg-slate-800 text-white py-3 rounded-xl font-bold shadow-md hover:bg-slate-700 transition-all text-sm active:scale-[0.98]"
+            >
+              立即發佈
+            </button>
+          </div>
         </footer>
       </div>
     </div>
   );
 }
 
-// --- 2. 公告頁面主體 (實時連動版) ---
+// --- 2. 主頁面 ---
 export default function AnnouncementsPage() {
-  const [hasMounted, setHasMounted] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
+  const { profile } = useAuth(); // 💡 獲取目前登入者的部門資訊
+  const [showModal, setShowModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<Announcement | null>(null);
   const [loading, setLoading] = useState(true);
-  
-  // 移除寫死的陣列，改為由 Firebase 驅動
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  
+  const isAdmin = profile?.role === "admin"; 
 
   useEffect(() => { 
-    setHasMounted(true); 
-
-    // 監聽 announcements 集合並按日期降序排列
-    const q = query(collection(db, "announcements"), orderBy("date", "desc"));
-    
+    const q = query(collection(db, "announcements"), orderBy("isPinned", "desc"), orderBy("date", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => {
-        const rawData = doc.data();
-        return {
-          id: doc.id,
-          ...rawData,
-          // 映射 Firebase 的 type 欄位到 UI 的 category 欄位
-          category: rawData.type || rawData.category || "通知",
-          // 處理日期顯示格式
-          date: rawData.date?.toDate ? rawData.date.toDate().toLocaleDateString('zh-TW') : rawData.date
-        };
-      }) as Announcement[];
-      
-      setAnnouncements(data);
-      setLoading(false);
-    }, (error) => {
-      console.error("Firestore 監聽失敗:", error);
+      setAnnouncements(snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        category: doc.data().type || doc.data().category || "通知",
+        date: doc.data().date?.toDate ? doc.data().date.toDate().toLocaleDateString('zh-TW') : doc.data().date
+      })) as Announcement[]);
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
 
-  // 真正存入 Firebase 資料庫
-  const handleSave = async (data: any) => {
+  const handleSave = async (data: any, status: Status) => {
     try {
-      await addDoc(collection(db, "announcements"), {
-        ...data,
-        type: data.category, // 同步 Dashboard 使用的 type 欄位
-        author: "管理員",
-        date: serverTimestamp(), // 使用伺服器精確時間
-      });
-      setShowCreate(false);
-    } catch (e) {
-      console.error("公告發佈失敗:", e);
-      alert("發佈失敗，請檢查權限設定");
-    }
+      if (editingItem) {
+        await updateDoc(doc(db, "announcements", editingItem.id), { ...data, status, updatedAt: serverTimestamp() });
+      } else {
+        await addDoc(collection(db, "announcements"), {
+          ...data,
+          status,
+          author: profile?.displayName || "管理員",
+          date: serverTimestamp(),
+        });
+      }
+      setEditingItem(null);
+      setShowModal(false);
+    } catch (e) { console.error("儲存失敗:", e); }
   };
 
-  if (!hasMounted || loading) return <div className="flex-1 h-screen flex items-center justify-center bg-slate-50/30 font-bold">載入公告中...</div>;
+  const togglePublish = async (id: string, currentStatus: Status) => {
+    const newStatus = currentStatus === "published" ? "draft" : "published";
+    await updateDoc(doc(db, "announcements", id), { status: newStatus });
+  };
+
+  if (loading) return <div className="h-screen flex items-center justify-center text-slate-300 font-bold italic text-sm tracking-widest">資料同步中...</div>;
 
   return (
-    <div className="flex-1 h-screen overflow-y-auto bg-slate-50/30 p-8">
-      <div className="max-w-5xl mx-auto">
-        <header className="mb-10 flex justify-between items-end">
+    <div className="flex-1 h-screen overflow-y-auto bg-slate-50/50 p-8 lg:p-12 font-sans">
+      <div className="max-w-4xl mx-auto">
+        <header className="mb-12 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">📢 系統公告</h1>
-            <p className="text-sm text-slate-500 mt-2">追蹤最新制度變更與系統更新說明</p>
+            <div className="flex items-center gap-3">
+              <div className="w-1.5 h-6 bg-blue-500 rounded-full shadow-sm"></div>
+              <h1 className="text-2xl font-bold text-slate-700 tracking-tight">系統公告</h1>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1 font-semibold uppercase tracking-widest ml-4">Announcement Management</p>
           </div>
-          <button 
-            onClick={() => setShowCreate(true)}
-            className="bg-slate-800 text-white px-6 py-3 rounded-2xl text-sm font-bold shadow-lg hover:bg-slate-700 transition-all flex items-center gap-2"
-          >
-            <span className="text-lg">+</span> 建立新公告
-          </button>
+          
+          {isAdmin && (
+            <button 
+              onClick={() => { setEditingItem(null); setShowModal(true); }}
+              className="px-8 py-3 bg-slate-800 text-white rounded-2xl text-xs font-bold shadow-lg hover:bg-slate-700 transition-all active:scale-95"
+            >
+              + 建立新公告
+            </button>
+          )}
         </header>
 
-        <div className="space-y-4 pb-20">
-          {announcements.map((item) => (
-            <div
-              key={item.id}
-              className={`bg-white border rounded-2xl p-6 shadow-sm hover:shadow-md transition-all ${
-                item.isPinned ? "border-amber-200 ring-1 ring-amber-50" : "border-slate-200"
-              }`}
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-                <div className="flex items-center gap-2">
-                  {item.isPinned && (
-                    <span className="bg-amber-400 text-white text-[10px] px-2 py-0.5 rounded font-bold shadow-sm">置頂</span>
+        <div className="space-y-6 pb-20">
+          {announcements
+            .filter(item => {
+              // 💡 權限過濾邏輯
+              if (isAdmin) return true; // 管理員看全部
+              if (item.status !== "published") return false; // 員工不看草稿
+              
+              // 💡 部門過濾：顯示「全部」或是「所屬部門」的公告
+              const userDept = profile?.department || "未分配";
+              return item.targetDepartment === "全部" || item.targetDepartment === userDept;
+            }) 
+            .map((item) => (
+              <div 
+                key={item.id} 
+                className={`bg-white rounded-[2rem] p-8 border ${
+                  item.status === 'draft' ? 'border-dashed border-slate-200 opacity-80' : 'border-slate-50'
+                } shadow-sm relative transition-all duration-300 hover:shadow-md`}
+              >
+                <div className="flex flex-wrap items-center gap-3 mb-5">
+                  {item.status === 'published' ? (
+                    <span className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                      發佈中
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-lg uppercase tracking-tighter">
+                      草稿
+                    </span>
                   )}
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                    item.category === "重要" ? "bg-red-50 text-red-600 border-red-100" :
-                    item.category === "通知" ? "bg-blue-50 text-blue-600 border-blue-100" : "bg-slate-100 text-slate-600 border-slate-200"
+                  
+                  {item.isPinned && <span className="text-[9px] font-bold text-amber-500 bg-amber-50 px-2.5 py-1 rounded-lg">置頂</span>}
+                  
+                  <span className={`text-[9px] font-bold px-2.5 py-1 rounded-lg uppercase ${
+                    item.category === "重要" ? "text-red-500 bg-red-50" : "text-blue-500 bg-blue-50"
                   }`}>
                     {item.category}
                   </span>
-                  <h2 className="font-bold text-slate-800">{item.title}</h2>
-                </div>
-                <span className="sm:ml-auto text-xs text-slate-400 font-mono">{item.date}</span>
-              </div>
 
-              <p className="text-sm text-slate-600 leading-relaxed border-l-4 border-slate-100 pl-4">
-                {item.content}
-              </p>
-
-              <div className="mt-6 pt-4 border-t border-slate-50 flex justify-between items-center text-[11px] text-slate-400">
-                <div className="flex gap-4">
-                  <span>發佈：{item.author}</span>
-                  <span>對象：{item.targets?.join(", ") || "全體同仁"}</span>
+                  {/* 💡 顯示公告對象部門標籤 (僅管理員可見) */}
+                  {isAdmin && (
+                    <span className="text-[9px] font-bold text-indigo-500 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100 uppercase">
+                      收件人: {item.targetDepartment}
+                    </span>
+                  )}
+                  
+                  <h2 className="font-bold text-slate-700 text-lg tracking-tight ml-1">{item.title}</h2>
+                  <span className="ml-auto text-[10px] text-slate-300 font-medium font-mono">{item.date}</span>
                 </div>
-                <button className="text-blue-500 font-bold hover:text-blue-700">詳細內容 →</button>
+                
+                <p className="text-sm text-slate-500 leading-relaxed font-medium mb-8 pl-1">{item.content}</p>
+                
+                <div className="flex justify-between items-center text-[10px] text-slate-300 font-bold border-t border-slate-50 pt-5">
+                  <div className="flex items-center gap-4">
+                    <span className="flex items-center gap-1">👤 來源：<span className="text-slate-400">{item.author}</span></span>
+                    {isAdmin && (
+                      <div className="flex items-center gap-4">
+                        <button 
+                          onClick={() => { setEditingItem(item); setShowModal(true); }}
+                          className="text-blue-400 hover:text-blue-600 transition-colors"
+                        >
+                          編輯內容
+                        </button>
+                        <button 
+                          onClick={() => togglePublish(item.id, item.status)}
+                          className="text-slate-400 hover:text-slate-600 transition-colors"
+                        >
+                          {item.status === 'published' ? '下架回草稿' : '正式發佈'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {isAdmin && (
+                    <button 
+                      onClick={() => { if(confirm("確定刪除此公告？")) deleteDoc(doc(db, "announcements", item.id)) }} 
+                      className="text-slate-200 hover:text-red-400 transition-colors"
+                    >
+                      移除
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+            
           {announcements.length === 0 && (
-            <div className="text-center py-20 text-slate-400 italic">目前尚無公告資料</div>
+            <div className="text-center py-20 text-slate-300 font-bold italic text-sm uppercase tracking-[0.2em] opacity-60">
+              目前尚無系統公告
+            </div>
           )}
         </div>
       </div>
 
-      <CreateAnnouncementModal 
-        show={showCreate} 
-        onClose={() => setShowCreate(false)}
-        onSave={handleSave}
+      <AnnouncementModal 
+        show={showModal} 
+        initialData={editingItem} 
+        onClose={() => { setShowModal(false); setEditingItem(null); }} 
+        onSave={handleSave} 
       />
     </div>
   );

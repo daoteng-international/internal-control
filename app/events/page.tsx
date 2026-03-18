@@ -320,9 +320,26 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
                     <label className="text-[11px] font-bold text-slate-500 mb-1 block">公司統編</label>
                     <InputLineStyle value={formData.taxId || ""} onChange={(e) => setFormData({ ...formData, taxId: e.target.value })} placeholder="8碼數字" />
                   </div>
+                  {/* 替換約第 283 行開始的房號區塊 */}
                   <div>
                     <label className="text-[11px] font-bold text-slate-500 mb-1 block">房號</label>
                     <InputLineStyle value={formData.roomNo || ""} onChange={(e) => setFormData({ ...formData, roomNo: e.target.value })} placeholder="例如：A01" />
+                  </div>
+
+                  {/* 新增：卡片建立時間 (位於房號右側) */}
+                <div className="text-slate-800">
+                  <label className="text-[11px] font-bold text-slate-500 mb-1 block">卡片建立時間 (僅供查看)</label>
+                  <div className="w-full border-b py-2 text-sm bg-slate-100 text-slate-400 cursor-not-allowed font-mono px-1">
+                    {formData.createdAt ? new Date(formData.createdAt).toLocaleString('zh-TW', { 
+                      year: 'numeric', 
+                      month: 'numeric', 
+                      day: 'numeric', 
+                      hour: '2-digit', 
+                      minute: '2-digit', 
+                      second: '2-digit',
+                      hour12: false 
+                    }) : "-"}
+                  </div>
                   </div>
                 </div>
               </section>
@@ -439,7 +456,12 @@ export default function EventsManagementPage() {
     try {
       const payload = { ...data, name: data.title, contactPerson: data.customer, productLines: ["活動管理"], updatedAt: serverTimestamp() };
       if (isCreating || data.id === "NEW") {
-        const newRef = await addDoc(collection(db, "members"), { ...payload, createdAt: new Date().toISOString().split("T")[0], stageStartedAt: new Date().toISOString().split("T")[0], stageHistory: { "S1": new Date().toISOString().split("T")[0] } });
+      const newRef = await addDoc(collection(db, "members"), { 
+        ...payload, 
+        createdAt: new Date().toISOString(), 
+        stageStartedAt: new Date().toISOString(), 
+        stageHistory: { "S1": new Date().toISOString() } 
+      });
         await addDoc(collection(db, "members", newRef.id, "logs"), { action: "建立了新活動案件", user: currentUser, timestamp: serverTimestamp() });
       } else { await updateDoc(doc(db, "members", data.id), payload); }
       setIsCreating(false); setSelectedId(null);
@@ -468,7 +490,7 @@ export default function EventsManagementPage() {
     <div className="fixed inset-0 left-[260px] flex flex-col bg-slate-50/50 overflow-hidden text-slate-800">
       <header className="p-8 shrink-0 bg-white border-b shadow-sm z-10 text-slate-800">
         <div className="flex justify-between items-center mb-6 text-slate-800">
-          <h1 className="text-2xl font-bold italic underline decoration-purple-500/30 text-slate-800">活動管理看板</h1>
+          <h1 className="text-2xl font-bold  underline decoration-purple-500/30 text-slate-800">活動管理看板</h1>
           <button onClick={() => setIsCreating(true)} className="bg-slate-900 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg hover:bg-black transition-all text-sm">+ 新增活動案件</button>
         </div>
         {/* 搜尋列維持極簡 12px 樣式 */}

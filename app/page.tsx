@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
-import Link from "next/link";
+import { useState, useEffect, useMemo } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
 
@@ -15,15 +14,18 @@ function formatCurrency(n: number) {
 }
 
 // --- 專業數據統計卡片 ---
-function AnalyticCard({ title, value, hint, trend, trendType = "up", type = "default" }: any) {
+function AnalyticCard({ title, value, hint, trend, trendType = "up", type = "default", onClick }: any) {
   const styles = {
     default: "bg-white border-slate-100",
-    danger: "bg-red-50/20 border-red-100",
-    success: "bg-emerald-50/20 border-emerald-100",
+    danger: "bg-red-50 border-red-200 ring-2 ring-red-500/10",
+    success: "bg-emerald-50/20 border-emerald-100 ring-2 ring-emerald-500/10",
   };
 
   return (
-    <div className={`rounded-3xl border p-7 shadow-sm transition-all hover:shadow-md ${styles[type as keyof typeof styles]}`}>
+    <div 
+      onClick={onClick}
+      className={`rounded-3xl border p-7 shadow-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-1 cursor-pointer group ${styles[type as keyof typeof styles]}`}
+    >
       <div className="flex justify-between items-start">
         <span className="text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]">{title}</span>
         {trend && (
@@ -35,140 +37,102 @@ function AnalyticCard({ title, value, hint, trend, trendType = "up", type = "def
         )}
       </div>
       <div className="mt-5 flex items-baseline gap-3">
-        <div className="text-3xl font-black text-slate-800 tracking-tight">{value}</div>
+        <div className={`text-3xl font-black tracking-tight ${type === 'danger' ? 'text-red-600' : 'text-slate-800'}`}>{value}</div>
       </div>
-      <p className="mt-3 text-[11px] font-bold text-slate-400/80 italic">{hint}</p>
+      <p className="mt-3 text-[11px] font-bold text-slate-400/80 italic group-hover:text-slate-600 transition-colors">{hint}</p>
     </div>
   );
 }
 
-// --- 圖表組件：LineChartCard ---
-function LineChartCard({ title, subtitle, xLabels, series, yFormatter = (n: number) => String(n), hintRight }: any) {
-  const chartWidth = 760; const chartHeight = 220; const paddingLeft = 70; const paddingRight = 20;
-  const paddingTop = 20; const paddingBottom = 45;
-  const allValues = series.flatMap((s: any) => s.values);
-  const max = Math.max(1, ...allValues) * 1.2;
-  const innerW = chartWidth - paddingLeft - paddingRight;
-  const innerH = chartHeight - paddingTop - paddingBottom;
-  const xStep = innerW / (xLabels.length - 1 || 1);
-
-  return (
-    <div className="h-full bg-white rounded-[40px] border border-slate-100 p-10 shadow-sm flex flex-col font-sans">
-      <div className="flex justify-between items-start mb-8">
-        <div><h3 className="text-lg font-black text-slate-900">{title}</h3>{subtitle && <p className="text-xs font-bold text-slate-400 mt-1">{subtitle}</p>}</div>
-        {hintRight && <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full uppercase">{hintRight}</span>}
-      </div>
-      <div className="relative flex-1">
-        <div className="absolute left-0 h-[155px] flex flex-col justify-between text-[9px] font-bold text-slate-300 w-[60px] text-right pr-4">
-          <span>{yFormatter(max)}</span><span>{yFormatter(max/2)}</span><span>$0</span>
-        </div>
-        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-[250px] overflow-visible">
-          {[0, 0.5, 1].map(p => <line key={p} x1={paddingLeft} y1={paddingTop + innerH*p} x2={chartWidth-paddingRight} y2={paddingTop + innerH*p} stroke="#f1f5f9" strokeDasharray="4" />)}
-          {series.map((s: any, si: number) => (
-            <g key={s.key}>
-              <polyline points={s.values.map((v: number, i: number) => `${paddingLeft + i*xStep},${paddingTop + innerH - (v/max*innerH)}`).join(" ")} fill="none" stroke={["#3b82f6", "#10b981"][si % 2]} strokeWidth="3" />
-              {s.values.map((v: number, i: number) => <circle key={i} cx={paddingLeft + i*xStep} cy={paddingTop + innerH - (v/max*innerH)} r="4" fill="white" stroke={["#3b82f6", "#10b981"][si % 2]} strokeWidth="2" />)}
-            </g>
-          ))}
-          {xLabels.map((lab: string, i: number) => <text key={i} x={paddingLeft + i*xStep} y={paddingTop + innerH + 30} textAnchor="middle" className="fill-slate-400 text-[10px] font-bold">{lab}</text>)}
-        </svg>
-      </div>
-    </div>
-  );
-}
-
-// --- ✅ 對話機器人組件 (已優化為淺色樣式) ---
-function DecisionChatbot({ cases, totalARPU }: any) {
-  const [messages, setMessages] = useState([{ role: "ai", content: "您好，我是您的內控決策助理。請問今天需要為您生成每週報表、每月報表，或是提供經營建議？" }]);
-  const [inputValue, setInputValue] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages]);
-
-  const handleSend = () => {
-    if (!inputValue.trim()) return;
-    const userMsg = inputValue;
-    setMessages(prev => [...prev, { role: "user", content: userMsg }]);
-    setInputValue("");
-    setIsTyping(true);
-
-    setTimeout(() => {
-      let aiResponse = "";
-      if (userMsg.includes("每周") || userMsg.includes("每週")) {
-        aiResponse = `分析完畢！本週全系統進行中總額已達 ${formatCurrency(totalARPU)}。其中「四維館」貢獻度最高，但民權 20 樓開發案件量較上週略微下滑 4.2%。`;
-      } else if (userMsg.includes("建議")) {
-        aiResponse = "🚨 經營建議：系統偵測到有 3 筆高價值合約在 S2 階段停滯超過 7 天。建議立即針對民權館發起狀態追蹤，並調派工商部門專員協辦需求媒合。";
-      } else if (userMsg.includes("每月")) {
-        aiResponse = `本月報表摘要：目前營收已達成目標的 85%，較去年同期增長 12.8%。活動潛在預算轉化效率提升 2.1%，整體健康指標評定為「穩定」。`;
-      } else {
-        aiResponse = "收到指令。我正從 Firestore 雲端資料庫掃描案件、工商登記與活動開發的所有進度數據...";
-      }
-      setMessages(prev => [...prev, { role: "ai", content: aiResponse }]);
-      setIsTyping(false);
-    }, 1200);
+// --- 通用詳情清單組件 ---
+function DetailList({ title, list, themeColor }: { title: string; list: any[]; themeColor: string }) {
+  if (list.length === 0) return null;
+  const themes: any = {
+    red: "bg-red-500 border-red-100 text-red-600",
+    blue: "bg-blue-600 border-blue-100 text-blue-600",
+    emerald: "bg-emerald-600 border-emerald-100 text-emerald-600",
   };
 
   return (
-    <div className="bg-white rounded-[40px] border border-slate-100 p-10 shadow-sm flex flex-col h-[520px]">
-      <div className="flex items-center gap-3 mb-8 border-b border-slate-50 pb-6">
-        <div className="h-3 w-3 rounded-full bg-blue-500 animate-pulse shadow-[0_0_10px_rgba(59,130,246,0.3)]" />
-        <h3 className="text-xl font-black italic tracking-tight text-slate-800">🤖 AI 指揮決策系統</h3>
-      </div>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-5 mb-8 pr-2 custom-scrollbar">
-        {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] p-5 rounded-3xl text-sm font-bold leading-relaxed ${
-              m.role === "user" 
-                ? "bg-blue-600 text-white shadow-md" 
-                : "bg-slate-50 text-slate-700 border border-slate-100"
-            }`}>
-              {m.content}
-            </div>
-          </div>
-        ))}
-        {isTyping && <div className="text-[10px] font-black text-slate-400 animate-bounce tracking-widest pl-2 uppercase">System computing...</div>}
-      </div>
-      <div className="relative">
-        <input 
-          type="text" 
-          placeholder="輸入指令，例如：生成每週報表..." 
-          value={inputValue} 
-          onChange={(e) => setInputValue(e.target.value)} 
-          onKeyDown={(e) => e.key === "Enter" && handleSend()} 
-          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-5 pl-8 pr-24 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all text-slate-800" 
-        />
-        <button 
-          onClick={handleSend} 
-          className="absolute right-3 top-1/2 -translate-y-1/2 bg-slate-900 px-6 py-2.5 rounded-xl text-xs font-black text-white hover:bg-blue-600 active:scale-95 transition-all shadow-sm"
-        >
-          發送
-        </button>
+    <div className="mt-8 animate-in slide-in-from-top-4 duration-500">
+      <div className={`bg-white rounded-[32px] border ${themes[themeColor].split(' ')[1]} shadow-2xl overflow-hidden`}>
+        <div className={`${themes[themeColor].split(' ')[0]} px-8 py-4 flex justify-between items-center`}>
+          <h3 className="text-white font-black tracking-wider flex items-center gap-2">
+            {title} <span className="bg-white px-2 py-0.5 rounded-full text-[10px] font-black" style={{ color: themes[themeColor].split(' ')[2] }}>{list.length}</span>
+          </h3>
+        </div>
+        <div className="overflow-x-auto text-slate-800">
+          <table className="w-full text-left table-auto">
+            <thead className="bg-slate-50 border-b border-slate-100">
+              <tr>
+                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">產品線</th>
+                <th className="px-4 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">公司/案件名稱</th>
+                <th className="px-4 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">窗口/聯絡人</th>
+                <th className="px-4 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">建立日期</th>
+                <th className="px-4 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">金額</th>
+                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">狀態</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {list.map((item, i) => (
+                <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-8 py-5">
+                    <span className={`text-[9px] font-black px-2.5 py-1.5 rounded uppercase tracking-tight ${
+                      item.source === '辦公室' ? 'bg-blue-100 text-blue-700' : 
+                      item.source === '工商' ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'
+                    }`}>
+                      {item.source}
+                    </span>
+                  </td>
+                  <td className="px-4 py-5 font-bold text-slate-900 text-sm">{item.title || item.name}</td>
+                  <td className="px-4 py-5 text-sm text-slate-600 font-medium">{item.customer || item.contactPerson}</td>
+                  <td className="px-4 py-5 text-sm text-slate-500 font-mono tracking-tight">{item.createdAt || "-"}</td>
+                  <td className="px-4 py-5 text-sm font-bold text-slate-800">{formatCurrency(item.amount || 0)}</td>
+                  <td className="px-8 py-5 text-xs text-slate-500 font-medium">
+                    {item.isOverdue ? <span className="text-red-600 font-extrabold bg-red-100 px-2 py-1 rounded">逾期 {item.overdueDays} 天</span> : (item.stage || "進行中")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 }
 
-// --- 業務佔比圓餅圖 ---
-function RevenuePieChart({ cases, regs, evts }: any) {
-  const total = (cases + regs + evts) || 1;
-  const p1 = (cases / total) * 100; const p2 = (regs / total) * 100;
+// --- 回歸版：快速進度條 ---
+function MetricProgress({ label, value, percentage, colorClass }: any) {
   return (
-    <div className="h-full bg-slate-900 rounded-[40px] p-10 text-white shadow-xl flex flex-col items-center">
-      <h3 className="text-sm font-black text-slate-400 mb-10 uppercase tracking-widest self-start">業務類別分佈</h3>
-      <div className="relative w-48 h-48 mb-10">
-        <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
-          <circle cx="18" cy="18" r="15.9" fill="transparent" stroke="white" strokeOpacity="0.05" strokeWidth="3" />
-          <circle cx="18" cy="18" r="15.9" fill="transparent" stroke="#3b82f6" strokeWidth="3" strokeDasharray={`${p1} ${100-p1}`} />
-          <circle cx="18" cy="18" r="15.9" fill="transparent" stroke="#10b981" strokeWidth="3" strokeDasharray={`${p2} ${100-p2}`} strokeDashoffset={-p1} />
-        </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="text-2xl font-black">{cases+regs+evts}</span><span className="text-[9px] font-bold text-slate-500 uppercase">Projects</span></div>
+    <div className="group border border-slate-100 rounded-2xl p-5 bg-white transition-all hover:border-blue-100 hover:shadow-sm">
+      <div className="flex justify-between items-center mb-4">
+        <span className="text-xs font-black text-slate-600 uppercase tracking-tighter">{label}</span>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-sm font-black text-slate-950">{value}</span>
+          <span className="text-[11px] font-bold text-slate-400">({Math.round(percentage)}%)</span>
+        </div>
       </div>
-      <div className="w-full space-y-4">
-        {[{l:"租賃案件",c:"bg-blue-500",p:p1},{l:"工商登記",c:"bg-emerald-500",p:p2},{l:"活動開發",c:"bg-amber-500",p:100-p1-p2}].map(x=>(
-          <div key={x.l} className="flex justify-between items-center"><div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${x.c}`} /><span className="text-xs font-bold text-slate-300">{x.l}</span></div><span className="text-xs font-black">{Math.round(x.p)}%</span></div>
-        ))}
+      <div className="h-3 w-full bg-slate-50 rounded-full overflow-hidden border border-slate-100 relative">
+        <div className={`h-full absolute left-0 top-0 rounded-full transition-all duration-[800ms] ease-out ${colorClass}`} style={{ width: `${percentage}%` }} />
       </div>
+    </div>
+  );
+}
+
+// --- 大區塊容器 ---
+function DataSection({ title, tag, themeColor, children }: any) {
+  const themes: any = {
+    blue: "border-blue-100 bg-blue-50 text-blue-600",
+    emerald: "border-emerald-100 bg-emerald-50 text-emerald-600",
+    amber: "border-amber-100 bg-amber-50 text-amber-600",
+  };
+  return (
+    <div className="bg-white rounded-[40px] border border-slate-100 p-10 shadow-sm transition-all hover:border-slate-200 hover:shadow-md">
+      <header className="mb-10 flex justify-between items-center pb-6 border-b border-slate-100">
+        <h3 className="text-xl font-black text-slate-950 tracking-tight">{title}</h3>
+        <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest ${themes[themeColor]}`}>{tag}</span>
+      </header>
+      {children}
     </div>
   );
 }
@@ -176,76 +140,147 @@ function RevenuePieChart({ cases, regs, evts }: any) {
 export default function ProfessionalDashboard() {
   const [hasMounted, setHasMounted] = useState(false);
   const [cases, setCases] = useState<any[]>([]);
-  const [registrations, setRegistrations] = useState<any[]>([]);
-  const [events, setEvents] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [activeView, setActiveView] = useState<string | null>(null);
+  const [timeFilter, setTimeFilter] = useState("本月");
 
   useEffect(() => {
     setHasMounted(true);
-    onSnapshot(collection(db, "cases"), (s) => setCases(s.docs.map(d => d.data())));
-    onSnapshot(collection(db, "registrations"), (s) => setRegistrations(s.docs.map(d => d.data())));
-    onSnapshot(collection(db, "events"), (s) => setEvents(s.docs.map(d => d.data())));
+    const unsubCases = onSnapshot(collection(db, "cases"), (s) => setCases(s.docs.map(d => ({ ...d.data(), id: d.id, source: '辦公室' }))));
+    const unsubMembers = onSnapshot(collection(db, "members"), (s) => setMembers(s.docs.map(d => ({ ...d.data(), id: d.id }))));
+    return () => { unsubCases(); unsubMembers(); };
   }, []);
 
-  const analytics = useMemo(() => {
-    const caseTotal = cases.reduce((acc, curr) => acc + (curr.totalContractAmount || 0), 0);
-    const regTotal = registrations.reduce((acc, curr) => acc + (curr.monthlyRent || 0), 0);
-    const overdue = cases.filter(c => {
-      const diff = Math.floor((new Date().getTime() - new Date(c.stageStartedAt).getTime()) / (1000 * 60 * 60 * 24));
-      return diff >= 7;
-    }).length;
-    return { totalARPU: caseTotal + regTotal, overdue, totalActive: cases.length + registrations.length + events.length };
-  }, [cases, registrations]);
+  const { analytics, overdueList, revenueList, activeList, officeStats, regStats, eventStats, conversionRate } = useMemo(() => {
+    const now = new Date();
+    const nowTime = now.getTime();
+    
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfQuarter = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    const checkTime = (createdAt: string) => {
+      if (!createdAt) return false;
+      const date = new Date(createdAt);
+      if (timeFilter === "今日") return date >= startOfDay;
+      if (timeFilter === "本週") return date >= startOfWeek;
+      if (timeFilter === "本月") return date >= startOfMonth;
+      if (timeFilter === "本季") return date >= startOfQuarter;
+      if (timeFilter === "今年") return date >= startOfYear;
+      return true;
+    };
+
+    const allProcessed = [...cases, ...members].map(item => ({
+      ...item,
+      source: item.source === '辦公室' ? '辦公室' : (item.productLines?.includes('工商登記') ? '工商' : '活動'),
+      amount: item.totalContractAmount || 0
+    }));
+
+    const fullOverdue = allProcessed.filter(item => {
+      const isTargetStage = item.stage === 'S5' || item.stage === 'S7';
+      if (!isTargetStage || !item.stageStartedAt) return false;
+      return Math.floor((nowTime - new Date(item.stageStartedAt).getTime()) / (1000 * 60 * 60 * 24)) >= 3;
+    }).map(item => ({ ...item, isOverdue: true, overdueDays: Math.floor((nowTime - new Date(item.stageStartedAt).getTime()) / (1000 * 60 * 60 * 24)) }));
+
+    const timeFilteredData = allProcessed.filter(item => checkTime(item.createdAt));
+    const finishedByTime = timeFilteredData.filter(item => item.stage === 'S6' || item.stage === 'S8');
+    const activeByTime = timeFilteredData.filter(item => !['S6', 'S8', 'S11'].includes(item.stage));
+
+    const totalRev = finishedByTime.reduce((acc, curr) => acc + curr.amount, 0);
+
+    const bldStats = ["四維館", "民權20樓", "民權21樓", "民權27樓", "民權28樓"].map(name => {
+      const amt = finishedByTime.filter(i => i.source === '辦公室' && i.building === name).reduce((a, c) => a + c.amount, 0);
+      return { name, amt };
+    });
+
+    const getProductStats = (tag: string) => {
+      const items = timeFilteredData.filter(i => i.source === tag);
+      const finished = items.filter(i => i.stage === 'S6' || i.stage === 'S8');
+      const rev = finished.reduce((a, c) => a + c.amount, 0);
+      const rate = items.length > 0 ? (finished.length / items.length) * 100 : 0;
+      return { rev, rate, count: finished.length };
+    };
+
+    return {
+      analytics: { totalRevenue: totalRev, overdueCount: fullOverdue.length, totalActive: activeByTime.length },
+      overdueList: fullOverdue, revenueList: finishedByTime, activeList: activeByTime,
+      officeStats: bldStats,
+      regStats: getProductStats('工商'),
+      eventStats: getProductStats('活動'),
+      conversionRate: timeFilteredData.length > 0 ? (finishedByTime.length / timeFilteredData.length) * 100 : 0
+    };
+  }, [cases, members, timeFilter]);
 
   if (!hasMounted) return <div className="flex-1 h-screen bg-slate-50/30" />;
+  const toggleView = (view: string) => setActiveView(activeView === view ? null : view);
 
   return (
-    <div className="flex-1 h-screen overflow-y-auto bg-[#F8FAFC] font-sans custom-scrollbar p-12">
-      <div className="max-w-[1400px] mx-auto">
-        <header className="mb-14 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
+    <div className="flex-1 h-screen overflow-y-auto bg-[#F8FAFC] font-sans custom-scrollbar p-12 text-slate-900">
+      <div className="max-w-[1400px] mx-auto space-y-12">
+        <header className="mb-14 flex flex-col lg:flex-row lg:items-center justify-between gap-8 pb-8 border-b border-slate-100">
           <div className="space-y-3">
-            <div className="flex items-center gap-3"><div className="h-2 w-2 rounded-full bg-blue-600 animate-pulse" /><span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Executive Decision Support</span></div>
-            <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic underline decoration-blue-500/20">內控指揮中心</h1>
+            <div className="flex items-center gap-3"><div className="h-2.5 w-2.5 rounded-full bg-blue-600 animate-pulse" /><span className="text-[11px] font-black text-blue-700 uppercase tracking-[0.2em]">Jade Internal Control System</span></div>
+            <h1 className="text-4xl font-black tracking-tighter text-slate-950">內控指揮中心 Dashboard</h1>
           </div>
-          <div className="flex bg-white p-2 rounded-2xl shadow-sm border">{["今日", "本週", "本月"].map(t => <button key={t} className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${t === "本月" ? "bg-slate-900 text-white shadow-lg" : "text-slate-400 hover:bg-slate-50"}`}>{t}</button>)}</div>
+          <div className="flex bg-white p-2 rounded-2xl shadow-inner border border-slate-100">
+            {["今日", "本週", "本月", "本季", "今年"].map(t => (
+              <button key={t} onClick={() => setTimeFilter(t)} className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all duration-300 ${timeFilter === t ? "bg-slate-950 text-white shadow-lg" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"}`}>{t}</button>
+            ))}
+          </div>
         </header>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-12">
-          <AnalyticCard title="當前預計營收" value={formatCurrency(analytics.totalARPU)} hint="實時串接 Firestore" trend="↑ 12.5%" />
-          <AnalyticCard title="全系統警示數" value={analytics.overdue} hint="逾期 7 天未更動案" type={analytics.overdue > 0 ? "danger" : "default"} trend={analytics.overdue > 0 ? "⚠ 需注意" : "✔ 正常"} trendType={analytics.overdue > 0 ? "down" : "up"} />
-          <AnalyticCard title="總活躍案件量" value={analytics.totalActive} hint="跨模組整合統計" trend="↑ 5" />
-          <AnalyticCard title="業務轉換率" value="82.4%" hint="Demo：結案效率評比" type="success" trend="↑ 2.1%" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+          <AnalyticCard title={`成交業績 (${timeFilter})`} value={formatCurrency(analytics.totalRevenue)} hint="點擊查看成交清單" onClick={() => toggleView('revenue')} type={activeView === 'revenue' ? 'success' : 'default'} trend="LIVE" />
+          <AnalyticCard title="逾期風險監控" value={analytics.overdueCount} hint="顯示全系統未處理風險" type={analytics.overdueCount > 0 ? "danger" : "default"} trend={analytics.overdueCount > 0 ? "需核閱" : "正常"} trendType={analytics.overdueCount > 0 ? "down" : "up"} onClick={() => toggleView('overdue')} />
+          <AnalyticCard title={`新增在辦案件 (${timeFilter})`} value={analytics.totalActive} hint="點擊查看本期新進案件" onClick={() => toggleView('active')} />
+          <AnalyticCard title="平均轉換率" value={`${Math.round(conversionRate)}%`} hint="本期結案轉化指標" trend="↑ 2.1%" />
         </div>
+
+        {activeView === 'overdue' && <DetailList title="🚨 全系統逾期風險總覽" list={overdueList} themeColor="red" />}
+        {activeView === 'revenue' && <DetailList title={`💰 本期成交案件明細 (${timeFilter})`} list={revenueList} themeColor="emerald" />}
+        {activeView === 'active' && <DetailList title={`📁 本期新進活躍案件 (${timeFilter})`} list={activeList} themeColor="blue" />}
 
         <div className="space-y-12">
-          {/* ✅ 更新點：DecisionChatbot 現在是淺色背景 */}
-          <DecisionChatbot cases={cases} totalARPU={analytics.totalARPU} />
           
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-            <div className="lg:col-span-8">
-              <LineChartCard title="📈 成長趨勢透視" subtitle="營收波動分析 (結合模擬趨勢)" xLabels={["9月", "10月", "11月", "12月", "1月", "2月"]} series={[{ key: "r", values: [analytics.totalARPU*0.85, analytics.totalARPU*0.92, analytics.totalARPU*1.05, analytics.totalARPU*0.98, analytics.totalARPU*1.1, analytics.totalARPU] }]} yFormatter={formatCurrency} hintRight="Trend Analysis" />
+          <DataSection title="辦公室租賃館別營收貢獻" tag="OFFICE LINE" themeColor="blue">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8">
+              {officeStats.map((s, i) => (
+                <MetricProgress key={s.name} label={s.name} value={formatCurrency(s.amt)} percentage={analytics.totalRevenue > 0 ? (s.amt/analytics.totalRevenue)*100 : 0} colorClass={["bg-blue-600","bg-indigo-500","bg-purple-500","bg-violet-500","bg-sky-500"][i]} />
+              ))}
             </div>
-            <div className="lg:col-span-4"><RevenuePieChart cases={cases.length} regs={registrations.length} evts={events.length} /></div>
-          </div>
+          </DataSection>
 
-          <div className="bg-white rounded-[40px] border p-12 shadow-sm">
-            <h3 className="text-lg font-black text-slate-900 mb-10 flex justify-between items-center">🏢 各館別業績貢獻分配 <span className="text-[10px] font-black bg-blue-50 text-blue-500 px-3 py-1 rounded-full">REAL-TIME DATA</span></h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-24 gap-y-10">
-              {["四維館", "民權20樓", "民權21樓", "民權27樓", "民權28樓"].map((name, i) => {
-                const amount = cases.filter(c => c.building === name).reduce((acc, curr) => acc + (curr.totalContractAmount || 0), 0);
-                return (
-                  <div key={name} className="group">
-                    <div className="flex justify-between items-center mb-4"><span className="text-xs font-black text-slate-500 uppercase tracking-tighter">{name}</span><span className="text-sm font-black text-slate-800">{formatCurrency(amount)}</span></div>
-                    <div className="h-2.5 w-full bg-slate-50 rounded-full overflow-hidden border">
-                      <div className={`h-full transition-all duration-[1500ms] ${["bg-blue-600","bg-indigo-500","bg-emerald-500","bg-amber-500","bg-rose-500"][i]}`} style={{ width: `${analytics.totalARPU > 0 ? (amount/analytics.totalARPU)*100 : 0}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
+          <DataSection title="工商登記績效指標" tag="REGISTRATION" themeColor="emerald">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+              <div className="space-y-8">
+                <MetricProgress label="當期成交業績" value={formatCurrency(regStats.rev)} percentage={analytics.totalRevenue > 0 ? (regStats.rev/analytics.totalRevenue)*100 : 0} colorClass="bg-emerald-600" />
+                <MetricProgress label="當期成交轉換率" value={`${Math.round(regStats.rate)}%`} percentage={regStats.rate} colorClass="bg-emerald-500" />
+              </div>
+              <div className="p-8 bg-emerald-50/50 rounded-3xl border border-emerald-100 shadow-inner flex flex-col items-center justify-center h-full min-h-[220px]">
+                <p className="text-xs font-bold text-emerald-800/70 uppercase mb-3 tracking-wider">當期成交件數</p>
+                <div className="text-6xl font-black text-emerald-700">{regStats.count} <span className="text-base font-medium text-emerald-500/80">件</span></div>
+              </div>
             </div>
-          </div>
+          </DataSection>
+
+          <DataSection title="活動場租績效指標" tag="EVENT SPACE" themeColor="amber">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+              <div className="space-y-8">
+                <MetricProgress label="當期成交業績" value={formatCurrency(eventStats.rev)} percentage={analytics.totalRevenue > 0 ? (eventStats.rev/analytics.totalRevenue)*100 : 0} colorClass="bg-amber-600" />
+                <MetricProgress label="當期成交轉換率" value={`${Math.round(eventStats.rate)}%`} percentage={eventStats.rate} colorClass="bg-amber-500" />
+              </div>
+              <div className="p-8 bg-amber-50/50 rounded-3xl border border-amber-100 shadow-inner flex flex-col items-center justify-center h-full min-h-[220px]">
+                <p className="text-xs font-bold text-amber-800/70 uppercase mb-3 tracking-wider">當期成交件數</p>
+                <div className="text-6xl font-black text-amber-700">{eventStats.count} <span className="text-base font-medium text-amber-500/80">件</span></div>
+              </div>
+            </div>
+          </DataSection>
+
         </div>
       </div>
-      <style dangerouslySetInnerHTML={{ __html: `.custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }` }} />
+      <style dangerouslySetInnerHTML={{ __html: `.custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; } .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }` }} />
     </div>
   );
 }
