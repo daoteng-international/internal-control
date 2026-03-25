@@ -11,7 +11,7 @@ export default function Sidebar() {
   const router = useRouter();
   const { profile } = useAuth();
 
-  // 1. 定義原始選單項目 (移除原本寫死在陣列裡的歷程記錄，改到下方判斷)
+  // 1. 定義原始選單項目
   const menuItems = [
     { name: "Dashboard", href: "/" },
     { name: "系統公告", href: "/announcements" },
@@ -19,12 +19,12 @@ export default function Sidebar() {
     { name: "工商登記管理", href: "/registrations" },
     { name: "活動管理", href: "/events" },
     { name: "客戶資料管理", href: "/customers" },
-    { name: "契約/合約管理", href: "/contracts" }, 
     { name: "教育文件管理", href: "/documents" },
   ];
 
   // 2. 定義管理員專屬項目
   const adminItems = [
+    { name: "範本管理", href: "/admin/templates" },
     { name: "人員/帳號管理", href: "/admin/users" },
     { name: "歷程記錄 (管理權限)", href: "/history" },
   ];

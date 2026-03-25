@@ -34,10 +34,10 @@ import {
 
 // --- 類型與常數定義 ---
 type RegStageId = "S1" | "S2" | "S3" | "S4" | "S5" | "S6" | "S7";
-type CustomerTag = "一般客戶" | "VIP客戶" | "黃金客戶";
+type CustomerTag = "一般客戶" | "MVP客戶" | "VIP客戶";
 type TaxType = "應稅(5%)" | "免稅/未稅";
 
-const CUSTOMER_TAGS: CustomerTag[] = ["一般客戶", "VIP客戶", "黃金客戶"];
+const CUSTOMER_TAGS: CustomerTag[] = ["一般客戶", "MVP客戶", "VIP客戶"];
 const BILLING_CYCLES = [
   { label: "月繳", value: 1 },
   { label: "季繳", value: 3 },
@@ -179,8 +179,8 @@ function CardBase({ item, isOverlay = false }: { item: RegCard; isOverlay?: bool
   
   const tagStyles: Record<CustomerTag, string> = {
     "一般客戶": "bg-white text-slate-400 border border-slate-200",
-    "VIP客戶": "bg-amber-50 text-amber-600 border border-amber-200",
-    "黃金客戶": "bg-yellow-100 text-yellow-700 border border-yellow-300",
+    "MVP客戶": "bg-amber-50 text-amber-600 border border-amber-200",
+    "VIP客戶": "bg-yellow-100 text-yellow-700 border border-yellow-300",
   };
 
   let badgeStyle = isFinished ? "bg-slate-400" : isPaused ? "bg-red-600" : (days >= 14 ? "bg-red-800" : days >= 7 ? "bg-red-500" : "bg-emerald-500");
@@ -269,32 +269,57 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
 
   // --- 自動財務計算：與辦公室邏輯一致 ---
   useEffect(() => {
-    if (!formData.startDate || !formData.endDate) return;
-    const start = new Date(formData.startDate);
-    const end = new Date(formData.endDate);
-    const diffTime = Math.abs(end.getTime() - start.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-    const calculatedMonths = Math.ceil(diffDays / 30); // 不足30天進位為一個月
-    
-    const monthlyRent = formData.monthlyRent || 0;
-    const taxMultiplier = formData.taxType === "應稅(5%)" ? 1.05 : 1;
-    const total = Math.round(monthlyRent * calculatedMonths * taxMultiplier);
+      if (!formData.startDate || !formData.endDate) return;
+      const start = new Date(formData.startDate);
+      const end = new Date(formData.endDate);
+      const diffTime = Math.abs(end.getTime() - start.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      const calculatedMonths = Math.ceil(diffDays / 30); // 不足30天進位為一個月
+      
+      const monthlyRent = formData.monthlyRent || 0;
+      const taxMultiplier = formData.taxType === "應稅(5%)" ? 1.05 : 1;
+      const total = Math.round(monthlyRent * calculatedMonths * taxMultiplier);
 
-    setFormData(prev => ({ 
-      ...prev, 
-      contractMonths: calculatedMonths, 
-      totalContractAmount: total 
-    }));
-  }, [formData.startDate, formData.endDate, formData.monthlyRent, formData.taxType]);
+      setFormData(prev => ({ 
+        ...prev, 
+        contractMonths: calculatedMonths, 
+        totalContractAmount: total 
+      }));
+    }, [formData.startDate, formData.endDate, formData.monthlyRent, formData.taxType]);
 
-  const handleValidateAndSave = () => {
-    if (!formData.title?.trim() || !formData.customer?.trim()) {
-      alert("⚠️ 請填寫必填欄位：公司全銜 與 主要窗口姓名");
-      return;
-    }
-    onSave(formData as RegCard);
-  };
+    // 💡 第一步新增：處理檔案選取與預覽邏輯
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
 
+      const newAttachment = {
+        name: file.name,
+        url: URL.createObjectURL(file), // 產生暫時預覽連結
+        uploadedAt: new Date().toISOString()
+      };
+
+      setFormData(prev => ({
+        ...prev,
+        attachments: [...(prev.attachments || []), newAttachment]
+      }));
+
+      if (!isCreate && item?.id) {
+        await addDoc(collection(db, "members", item.id, "logs"), { 
+          action: `準備上傳附件預覽: ${file.name}`, 
+          user: currentUser, 
+          timestamp: serverTimestamp() 
+        });
+      }
+      alert(`已讀取「${file.name}」，請點擊最下方「儲存並同步」完成更新！`);
+    };
+
+    const handleValidateAndSave = () => {
+      if (!formData.title?.trim() || !formData.customer?.trim()) {
+        alert("⚠️ 請填寫必填欄位：公司全銜 與 主要窗口姓名");
+        return;
+      }
+      onSave(formData as RegCard);
+    };
   const handleToggleTodo = async (todoId: string) => {
     if (formData.id === "NEW") { alert("請先存檔建立案件後再勾選事項。"); return; }
     const updated = (formData.todos || []).map(t => t.id === todoId ? { ...t, completed: !t.completed, completedBy: !t.completed ? currentUser : "", completedAt: !t.completed ? new Date().toLocaleString() : "" } : t);
@@ -305,16 +330,20 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
     }
   };
 
-  if (!item && !isCreate) return null;
+if (!item && !isCreate) return null;
 
   return (
     <div className="fixed inset-0 z-[100] flex justify-end font-sans text-slate-800">
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300">
         <header className="p-6 border-b flex justify-between items-center bg-white shrink-0 text-slate-800">
-          <div className="flex items-center gap-3"><h2 className="text-xl font-bold">{isCreate ? "🆕 新增工商登記" : "📝 編輯案件詳情"}</h2>{formData.stage === "S7" && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">暫停中</span>}</div>
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-bold">{isCreate ? "🆕 新增工商登記" : "📝 編輯案件詳情"}</h2>
+            {formData.stage === "S7" && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">暫停中</span>}
+          </div>
           <button onClick={onClose} className="text-slate-400 text-2xl hover:text-slate-600 transition-colors">✕</button>
         </header>
+
         <div className="flex px-8 border-b bg-slate-50/50">
           <button onClick={() => setActiveTab("info")} className={`py-4 px-6 text-sm font-bold border-b-2 transition-all ${activeTab === "info" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>基本資訊</button>
           {!isCreate && (
@@ -325,73 +354,162 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
             </>
           )}
         </div>
+
         <div className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar text-slate-800">
           {activeTab === "info" && (
             <>
-              {formData.stage === "S7" && <section className="bg-red-50 border border-red-100 p-5 rounded-2xl text-slate-800"><RequiredLabel>暫停原因詳述</RequiredLabel><input value={formData.pauseReason || ""} onChange={(e) => setFormData({ ...formData, pauseReason: e.target.value })} className="w-full border-b border-red-200 py-2 text-sm outline-none focus:border-red-500 font-bold bg-transparent text-red-700" /></section>}
-              <section className="space-y-4"><h3 className="text-sm font-bold border-l-4 border-emerald-600 pl-3 uppercase tracking-widest">案件狀態標籤</h3><div className="flex gap-2">{CUSTOMER_TAGS.map((t) => (<button key={t} onClick={() => setFormData({ ...formData, customerTag: t })} className={`px-4 py-2 text-xs font-bold rounded-xl border ${formData.customerTag === t ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-slate-400 border-slate-200"}`}>{t}</button>))}</div></section>
-              <section className="grid grid-cols-2 gap-6 text-slate-800"><div className="col-span-2"><RequiredLabel>公司/案件全銜</RequiredLabel><input value={formData.title || ""} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 font-medium bg-transparent" placeholder="輸入名稱" /></div><div><RequiredLabel>主要窗口姓名</RequiredLabel><input value={formData.customer || ""} onChange={(e) => setFormData({ ...formData, customer: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent placeholder:text-slate-300" placeholder="姓名" /></div><div><label className="text-[11px] font-bold text-slate-500 mb-1 block">聯絡電話</label><input value={formData.phone || ""} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent placeholder:text-slate-300" placeholder="09XX..." /></div><div><label className="text-[11px] font-bold text-slate-500 mb-1 block">公司統編</label><input value={formData.taxId || ""} onChange={(e) => setFormData({ ...formData, taxId: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent placeholder:text-slate-300" placeholder="8碼數字" /></div><div><label className="text-[11px] font-bold text-slate-500 mb-1 block">房號</label><input value={formData.roomNo || ""} onChange={(e) => setFormData({ ...formData, roomNo: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent placeholder:text-slate-300" placeholder="例如：A01" /></div><div><label className="text-[11px] font-bold text-slate-500 mb-1 block">信件編號</label><input value={formData.mailHandling || ""} onChange={(e) => setFormData({ ...formData, mailHandling: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent placeholder:text-slate-300" placeholder="掛號編號或備註" /></div><div><label className="text-[11px] font-bold text-slate-500 mb-1 block text-emerald-600">對接會計師</label><input value={formData.accountant || ""} onChange={(e) => setFormData({ ...formData, accountant: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent placeholder:text-slate-300" placeholder="事務所或聯絡人" /></div></section>
-              <div className="col-span-2 text-slate-800"><label className="text-xs font-bold text-slate-500 block mb-1">卡片建立時間 (僅供查看)</label><div className="w-full border-b py-2 text-sm bg-slate-100 text-slate-400 cursor-not-allowed font-mono px-1">{formData.createdAt ? new Date(formData.createdAt).toLocaleString('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : "-"}</div></div>
-              
-              <section className="space-y-4 text-slate-800"><h3 className="text-sm font-bold border-l-4 border-emerald-600 pl-3 uppercase tracking-widest text-slate-800">財務與週期</h3><div className="bg-emerald-50/30 border border-emerald-100 rounded-2xl p-6 space-y-6 text-slate-800">
-                <div className="grid grid-cols-2 gap-6 text-slate-800">
-                  <div><label className="text-[11px] font-bold text-emerald-700 mb-1 block">稅別</label><select value={formData.taxType || "應稅(5%)"} onChange={(e) => setFormData({...formData, taxType: e.target.value as TaxType})} className="w-full border-b border-emerald-200 py-2 text-sm outline-none bg-transparent focus:border-emerald-500 text-slate-800"><option value="應稅(5%)">應稅(5%)</option><option value="免稅/未稅">免稅/未稅</option></select></div>
-                  <div><label className="text-[11px] font-bold text-emerald-700 mb-1 block">繳費週期 (手動標記)</label><select value={formData.billingCycle || "月繳"} onChange={(e) => setFormData({...formData, billingCycle: e.target.value})} className="w-full border-b border-emerald-200 py-2 text-sm outline-none bg-transparent focus:border-emerald-500 text-slate-800">{BILLING_CYCLES.map(c => <option key={c.label} value={c.label}>{c.label}</option>)}</select></div>
-                  {/* 💡 關鍵新增：合約週期 (自動計算) */}
-                  <div className="col-span-2 bg-white/50 p-4 rounded-xl border border-emerald-100/50">
-                    <label className="text-[11px] font-bold text-emerald-700 mb-1 block">合約週期 (系統自動感應計算)</label>
-                    <div className="text-lg font-black text-slate-800">{formData.contractMonths || 0} 個月</div>
-                    <p className="text-[10px] text-slate-400 mt-1 italic">* 根據下方起訖日期自動判定，不足 30 天以 1 個月計</p>
-                  </div>
-                  <div><label className="text-[11px] font-bold text-emerald-700 mb-1 block">合約起日</label><input type="date" value={formData.startDate || ""} onChange={(e) => setFormData({ ...formData, startDate: e.target.value })} className="w-full border-b border-emerald-200 py-2 text-sm outline-none bg-transparent text-slate-800" /></div>
-                  <div><label className="text-[11px] font-bold text-emerald-700 mb-1 block">合約迄日</label><input type="date" value={formData.endDate || ""} onChange={(e) => setFormData({ ...formData, endDate: e.target.value })} className="w-full border-b border-emerald-200 py-2 text-sm outline-none bg-transparent text-slate-800" /></div>
-                  <div className="col-span-2 text-slate-800"><label className="text-[11px] font-bold text-emerald-700 mb-1 block text-slate-800">實際月租 (未稅)</label>
-                  <input type="number" 
-                    value={formData.monthlyRent === 0 ? "" : formData.monthlyRent || ""} 
-                    onChange={(e) => setFormData({...formData, monthlyRent: Number(e.target.value)})} 
-                    className="w-full border-b border-emerald-200 py-2 text-lg font-black outline-none bg-transparent focus:border-emerald-500 text-emerald-800" /></div>
+              {formData.stage === "S7" && (
+                <section className="bg-red-50 border border-red-100 p-5 rounded-2xl text-slate-800">
+                  <RequiredLabel>暫停原因詳述</RequiredLabel>
+                  <input value={formData.pauseReason || ""} onChange={(e) => setFormData({ ...formData, pauseReason: e.target.value })} className="w-full border-b border-red-200 py-2 text-sm outline-none focus:border-red-500 font-bold bg-transparent text-red-700" />
+                </section>
+              )}
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-bold border-l-4 border-emerald-600 pl-3 uppercase tracking-widest">案件狀態標籤</h3>
+                <div className="flex gap-2">
+                  {CUSTOMER_TAGS.map((t) => (
+                    <button key={t} onClick={() => setFormData({ ...formData, customerTag: t })} className={`px-4 py-2 text-xs font-bold rounded-xl border ${formData.customerTag === t ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-slate-400 border-slate-200"}`}>{t}</button>
+                  ))}
                 </div>
-                <div className="pt-4 border-t border-emerald-100 flex justify-between items-center text-slate-800"><span className="text-xs font-bold text-emerald-700">總金額 (含稅進位結果):</span><span className="text-2xl font-black text-emerald-600">{currency(formData.totalContractAmount || 0)}</span></div>
-              </div></section>
-              <section className="space-y-4 text-slate-800"><h3 className="text-sm font-bold border-l-4 border-slate-400 pl-3 uppercase tracking-widest text-slate-800">其他備註</h3><textarea value={formData.specialNotes || ""} onChange={(e) => setFormData({ ...formData, specialNotes: e.target.value })} className="w-full border rounded-xl p-3 text-sm min-h-[80px] bg-slate-50/50 outline-none text-slate-800" placeholder="內部紀錄備註..." /></section>
+              </section>
+
+              <section className="grid grid-cols-2 gap-6 text-slate-800">
+                <div className="col-span-2"><RequiredLabel>公司/案件全銜</RequiredLabel><input value={formData.title || ""} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 font-medium bg-transparent" /></div>
+                <div><RequiredLabel>主要窗口姓名</RequiredLabel><input value={formData.customer || ""} onChange={(e) => setFormData({ ...formData, customer: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent" /></div>
+                <div><label className="text-[11px] font-bold text-slate-500 mb-1 block">聯絡電話</label><input value={formData.phone || ""} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent" /></div>
+                <div><label className="text-[11px] font-bold text-slate-500 mb-1 block">公司統編</label><input value={formData.taxId || ""} onChange={(e) => setFormData({ ...formData, taxId: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent" /></div>
+                <div><label className="text-[11px] font-bold text-slate-500 mb-1 block">房號</label><input value={formData.roomNo || ""} onChange={(e) => setFormData({ ...formData, roomNo: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent" /></div>
+                <div><label className="text-[11px] font-bold text-slate-500 mb-1 block">信件編號</label><input value={formData.mailHandling || ""} onChange={(e) => setFormData({ ...formData, mailHandling: e.target.value })} className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent" /></div>
+                <div className="col-span-2 text-slate-800">
+                  <label className="text-xs font-bold text-slate-500 block mb-1">卡片建立時間 (僅供查看)</label>
+                  <div className="w-full border-b py-2 text-sm bg-slate-100 text-slate-400 cursor-not-allowed font-mono px-1">
+                    {formData.createdAt ? new Date(formData.createdAt).toLocaleString('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : "-"}
+                  </div>
+                </div>
+
+                <div className="col-span-2 border-t pt-6 mt-2">
+                  <div className="flex justify-between items-center mb-4 border-l-4 border-red-500 pl-3 bg-red-50 py-2 rounded-r-lg">
+                    <label className="text-sm font-black text-red-600">合約附件管理</label>
+                    <label className="cursor-pointer bg-red-500 text-white text-[10px] font-black px-4 py-1.5 rounded-xl hover:bg-red-600 shadow-md transition-all active:scale-95">
+                      + 選取檔案上傳
+                      <input type="file" className="hidden" onChange={handleFileUpload} />
+                    </label>
+                  </div>
+                  <div className="space-y-3">
+                    {(formData.attachments || []).map((file, idx) => (
+                      <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 hover:border-red-200 transition-colors">
+                        <div className="flex flex-col flex-1 truncate pr-4">
+                          <span className="text-xs font-bold text-slate-700 truncate">{file.name}</span>
+                          <span className="text-[9px] text-slate-400 italic mt-1">{file.uploadedAt?.substring(0, 10)} 上傳</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <a href={file.url} target="_blank" className="text-[10px] font-black bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 text-blue-600 hover:bg-blue-50 transition-all">檢視</a>
+                          <button type="button" onClick={() => setFormData(prev => ({ ...prev, attachments: (prev.attachments || []).filter((_, i) => i !== idx) }))} className="text-[10px] font-black bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 text-red-500 hover:bg-red-50">移除</button>
+                        </div>
+                      </div>
+                    ))}
+                    {(!formData.attachments || formData.attachments.length === 0) && (
+                      <div className="py-10 text-center border-2 border-dashed border-slate-100 rounded-[32px] bg-slate-50/30">
+                        <p className="text-xs font-bold text-slate-400 italic">目前尚未上傳任何合約附件</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              <section className="space-y-4 text-slate-800">
+                <h3 className="text-sm font-bold border-l-4 border-emerald-600 pl-3 uppercase tracking-widest text-slate-800">財務與週期</h3>
+                <div className="bg-emerald-50/30 border border-emerald-100 rounded-2xl p-6 space-y-6 text-slate-800">
+                  <div className="grid grid-cols-2 gap-6 text-slate-800">
+                    <div><label className="text-[11px] font-bold text-emerald-700 mb-1 block">稅別</label><select value={formData.taxType || "應稅(5%)"} onChange={(e) => setFormData({...formData, taxType: e.target.value as TaxType})} className="w-full border-b border-emerald-200 py-2 text-sm outline-none bg-transparent focus:border-emerald-500 text-slate-800"><option value="應稅(5%)">應稅(5%)</option><option value="免稅/未稅">免稅/未稅</option></select></div>
+                    <div><label className="text-[11px] font-bold text-emerald-700 mb-1 block">繳費週期</label><select value={formData.billingCycle || "月繳"} onChange={(e) => setFormData({...formData, billingCycle: e.target.value})} className="w-full border-b border-emerald-200 py-2 text-sm outline-none bg-transparent focus:border-emerald-500 text-slate-800">{BILLING_CYCLES.map(c => <option key={c.label} value={c.label}>{c.label}</option>)}</select></div>
+                    <div className="col-span-2 bg-white/50 p-4 rounded-xl border border-emerald-100/50">
+                      <label className="text-[11px] font-bold text-emerald-700 mb-1 block">合約週期</label>
+                      <div className="text-lg font-black text-slate-800">{formData.contractMonths || 0} 個月</div>
+                    </div>
+                    <div><label className="text-[11px] font-bold text-emerald-700 mb-1 block">合約起日</label><input type="date" value={formData.startDate || ""} onChange={(e) => setFormData({ ...formData, startDate: e.target.value })} className="w-full border-b border-emerald-200 py-2 text-sm outline-none bg-transparent text-slate-800" /></div>
+                    <div><label className="text-[11px] font-bold text-emerald-700 mb-1 block">合約迄日</label><input type="date" value={formData.endDate || ""} onChange={(e) => setFormData({ ...formData, endDate: e.target.value })} className="w-full border-b border-emerald-200 py-2 text-sm outline-none bg-transparent text-slate-800" /></div>
+                    <div className="col-span-2 text-slate-800">
+                      <label className="text-[11px] font-bold text-emerald-700 mb-1 block">實際月租 (未稅)</label>
+                      <input type="number" value={formData.monthlyRent === 0 ? "" : formData.monthlyRent || ""} onChange={(e) => setFormData({...formData, monthlyRent: Number(e.target.value)})} className="w-full border-b border-emerald-200 py-2 text-lg font-black outline-none bg-transparent focus:border-emerald-500 text-emerald-800" />
+                    </div>
+                  </div>
+                  <div className="pt-4 border-t border-emerald-100 flex justify-between items-center text-slate-800">
+                    <span className="text-xs font-bold text-emerald-700">總金額:</span>
+                    <span className="text-2xl font-black text-emerald-600">{currency(formData.totalContractAmount || 0)}</span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="space-y-4 text-slate-800">
+                <h3 className="text-sm font-bold border-l-4 border-slate-400 pl-3 uppercase tracking-widest text-slate-800">其他備註</h3>
+                <textarea value={formData.specialNotes || ""} onChange={(e) => setFormData({ ...formData, specialNotes: e.target.value })} className="w-full border rounded-xl p-3 text-sm min-h-[80px] bg-slate-50/50 outline-none text-slate-800" />
+              </section>
             </>
           )}
 
-          {activeTab === "todo" && <div className="space-y-4 text-slate-800"><h3 className="text-sm font-bold border-l-4 border-amber-500 pl-3 uppercase tracking-widest text-slate-800">核對清單</h3><div className="space-y-2">{(formData.todos || []).map(todo => (<div key={todo.id} onClick={() => handleToggleTodo(todo.id)} className={`flex items-start gap-4 p-4 rounded-xl border cursor-pointer transition-all ${todo.completed ? "bg-slate-50 border-slate-100 opacity-60" : "bg-white border-slate-200 shadow-sm"}`}><div className={`mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center ${todo.completed ? "bg-emerald-500 border-emerald-500 text-white" : "border-slate-300"}`}>{todo.completed && "✓"}</div><div className="flex-1 text-slate-800"><p className={`text-sm font-bold ${todo.completed ? "line-through text-slate-400" : "text-slate-800"}`}>{todo.text}</p>{todo.completed && <p className="text-[10px] text-slate-400 mt-1 italic">✓ {todo.completedBy} @ {todo.completedAt}</p>}</div></div>))}</div></div>}
+          {activeTab === "todo" && (
+            <div className="space-y-4 text-slate-800">
+              <h3 className="text-sm font-bold border-l-4 border-amber-500 pl-3 uppercase tracking-widest text-slate-800">核對清單</h3>
+              <div className="space-y-2">
+                {(formData.todos || []).map(todo => (
+                  <div key={todo.id} onClick={() => handleToggleTodo(todo.id)} className={`flex items-start gap-4 p-4 rounded-xl border cursor-pointer transition-all ${todo.completed ? "bg-slate-50 border-slate-100 opacity-60" : "bg-white border-slate-200 shadow-sm"}`}>
+                    <div className={`mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center ${todo.completed ? "bg-emerald-500 border-emerald-500 text-white" : "border-slate-300"}`}>{todo.completed && "✓"}</div>
+                    <div className="flex-1 text-slate-800">
+                      <p className={`text-sm font-bold ${todo.completed ? "line-through text-slate-400" : "text-slate-800"}`}>{todo.text}</p>
+                      {todo.completed && <p className="text-[10px] text-slate-400 mt-1 italic">✓ {todo.completedBy} @ {todo.completedAt}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {activeTab === "copy" && (
             <div className="space-y-8 text-slate-800">
               <div className="flex justify-between items-center border-l-4 border-emerald-600 pl-3">
                 <h3 className="text-sm font-bold uppercase tracking-widest text-slate-800">內容快速複製</h3>
-                <span className="text-[9px] font-black bg-emerald-50 text-emerald-600 px-2 py-1 rounded-lg border border-emerald-100">雲端同步中</span>
               </div>
-              <div className="space-y-6 text-slate-800">
-                {templates.length > 0 ? (
-                  templates.map((temp: any) => (
-                    <div key={temp.id} className="group relative bg-white p-4 rounded-xl border border-slate-200 hover:border-emerald-200 transition-all shadow-sm">
-                      <label className="text-xs font-bold text-emerald-600 block mb-2">{temp.label}</label>
-                      <p className="text-sm whitespace-pre-wrap leading-relaxed pr-10 text-slate-700">{temp.content}</p>
-                      <button onClick={() => { navigator.clipboard.writeText(temp.content); alert("已複製到剪貼簿！"); }} className="absolute top-4 right-4 text-slate-400 hover:text-emerald-600 transition-colors text-xs">📋</button>
-                    </div>
-                  ))
-                ) : (
-                  <div className="py-20 text-center text-slate-400 italic text-xs">正在載入工商登記範本...</div>
-                )}
+              <div className="space-y-6">
+                {templates.map((temp: any) => (
+                  <div key={temp.id} className="group relative bg-white p-4 rounded-xl border border-slate-200 hover:border-emerald-200 transition-all shadow-sm">
+                    <label className="text-xs font-bold text-emerald-600 block mb-2">{temp.label}</label>
+                    <p className="text-sm whitespace-pre-wrap leading-relaxed pr-10 text-slate-700">{temp.content}</p>
+                    <button onClick={() => { navigator.clipboard.writeText(temp.content); alert("已複製到剪貼簿！"); }} className="absolute top-4 right-4 text-slate-400 hover:text-emerald-600 transition-colors text-xs">📋</button>
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          {activeTab === "history" && <div className="space-y-10 text-slate-800"><section className="space-y-4 text-slate-800"><h3 className="text-sm font-bold border-l-4 border-blue-600 pl-3 uppercase tracking-widest text-slate-800">階段停留分析</h3><div className="grid grid-cols-2 gap-4 bg-blue-50/30 p-4 rounded-xl border border-blue-100 text-slate-800">{STAGES.map(s => { const entryDate = formData.stageHistory?.[s.id]; let duration = entryDate ? `${Math.floor((new Date().getTime() - new Date(entryDate).getTime()) / (1000 * 60 * 60 * 24))} 天` : "-"; return (<div key={s.id} className="flex justify-between border-b border-blue-100 p-1 text-slate-800"><span className="text-xs font-bold text-blue-800">{s.title}</span><span className="text-sm font-black text-slate-700">{duration}</span></div>); })}</div></section><section className="space-y-4 text-slate-800"><h3 className="text-sm font-bold border-l-4 border-slate-400 pl-3 uppercase tracking-widest text-slate-800">詳細歷史紀錄</h3><div className="relative border-l-2 border-slate-100 ml-2 pl-6 space-y-8 mt-4 text-slate-800">{logs.map(log => (<div key={log.id} className="relative text-slate-800"><div className="absolute -left-[31px] top-1 w-2.5 h-2.5 rounded-full bg-slate-200 border-2 border-white" /><div className="text-[11px] text-slate-400 font-medium mb-1 text-slate-400">{log.timestamp?.toDate().toLocaleString() || "剛才"}</div><div className="text-sm text-slate-700 leading-relaxed font-medium bg-slate-50 p-3 rounded-lg border border-slate-100 text-slate-700">{log.action} <span className="text-slate-400 text-xs ml-1 font-normal text-slate-400">by {log.user}</span></div></div>))}</div></section></div>}
+          {activeTab === "history" && (
+            <div className="space-y-10 text-slate-800">
+              <section className="space-y-4">
+                <h3 className="text-sm font-bold border-l-4 border-blue-600 pl-3 uppercase tracking-widest text-slate-800">詳細歷史紀錄</h3>
+                <div className="relative border-l-2 border-slate-100 ml-2 pl-6 space-y-8 mt-4">
+                  {logs.map(log => (
+                    <div key={log.id} className="relative">
+                      <div className="absolute -left-[31px] top-1 w-2.5 h-2.5 rounded-full bg-slate-200 border-2 border-white" />
+                      <div className="text-[11px] text-slate-400 font-medium mb-1">{log.timestamp?.toDate().toLocaleString() || "剛才"}</div>
+                      <div className="text-sm text-slate-700 leading-relaxed font-medium bg-slate-50 p-3 rounded-lg border border-slate-100">{log.action} <span className="text-slate-400 text-xs ml-1 font-normal">by {log.user}</span></div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          )}
         </div>
-        <footer className="p-6 border-t bg-slate-50 shrink-0 flex gap-3 text-slate-800">
-          {!isCreate && <button type="button" onClick={() => onDelete(item!.id)} className="px-6 py-4 rounded-2xl font-bold border border-red-200 text-red-500 hover:bg-red-50 transition-colors text-xs text-red-500">刪除案件</button>}
-          <button onClick={handleValidateAndSave} className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-black transition-all shadow-lg text-xs text-white">儲存並同步</button>
-        </footer>
+
+      <footer className="p-6 border-t bg-slate-50 shrink-0 flex gap-3 text-slate-800">
+        {!isCreate && <button type="button" onClick={() => onDelete(item!.id)} className="px-6 py-4 rounded-2xl font-bold border border-red-200 text-red-500 hover:bg-red-50 transition-colors text-xs">刪除案件</button>}
+        {/* 💡 修正：將函數名稱改為 handleValidateAndSave */}
+        <button onClick={handleValidateAndSave} className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-black transition-all shadow-lg text-xs">儲存並同步</button>
+      </footer>
       </div>
     </div>
   );
 }
-
 // --- 主看板頁面 ---
 export default function RegistrationsPage() {
   const [hasMounted, setHasMounted] = useState(false);
@@ -412,12 +530,27 @@ export default function RegistrationsPage() {
   const [signedOffOverdue, setSignedOffOverdue] = useState<string[]>([]);
 
   useEffect(() => {
-    setHasMounted(true);
-    onAuthStateChanged(auth, (user) => { if (user) setCurrentUser(user.email || "User"); });
-    const q = query(collection(db, "members"), where("productLines", "array-contains", "工商登記"));
-    const unsubscribe = onSnapshot(q, (snapshot) => { setCards(snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as RegCard[]); setLoading(false); });
-    return () => unsubscribe();
-  }, []);
+      setHasMounted(true);
+      onAuthStateChanged(auth, (user) => { if (user) setCurrentUser(user.email || "User"); });
+      const q = query(collection(db, "members"), where("productLines", "array-contains", "工商登記"));
+      
+      const unsubscribe = onSnapshot(q, (snapshot) => { 
+        const newCards = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as RegCard[];
+        setCards(newCards); 
+        setLoading(false); 
+
+        // 💡 關鍵新增：偵測網址參數並自動開啟彈窗
+        const params = new URLSearchParams(window.location.search);
+        const idFromUrl = params.get('id');
+        if (idFromUrl) {
+          setSelectedId(idFromUrl);
+          // 選項：清除網址參數，避免重新整理時重複彈出
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      });
+      
+      return () => unsubscribe();
+    }, []);
 
   const handleApplyFilter = () => setAppliedFilters({ query: searchInput, start: monthStartInput, end: monthEndInput, tag: tagInput, cycle: cycleInput });
   const handleClearFilter = () => { setSearchInput(""); setMonthStartInput(""); setMonthEndInput(""); setTagInput("全部"); setCycleInput("全部"); setAppliedFilters({ query: "", start: "", end: "", tag: "全部", cycle: "全部" }); };
@@ -442,7 +575,14 @@ export default function RegistrationsPage() {
 
   const handleSave = async (data: RegCard) => {
     const { id, ...rest } = data;
-    const payload = { ...rest, name: data.title, contactPerson: data.customer, productLines: ["工商登記"], updatedAt: serverTimestamp() };
+    const payload = { 
+      ...rest, 
+      name: data.title, 
+      contactPerson: data.customer, 
+      productLines: ["工商登記"], // 💡 確保保留標籤，契約中心才能分類
+      attachments: data.attachments || [], // 💡 關鍵新增：同步附件陣列
+      updatedAt: serverTimestamp() 
+    };
     if (isCreating || id === "NEW") {
       const ref = await addDoc(collection(db, "members"), { ...payload, createdAt: new Date().toISOString(), stageStartedAt: new Date().toISOString(), stageHistory: { "S1": new Date().toISOString() } });
       await addDoc(collection(db, "members", ref.id, "logs"), { action: "建立了新工商案件", user: currentUser, timestamp: serverTimestamp() });

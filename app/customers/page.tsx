@@ -8,6 +8,7 @@ import {
   onSnapshot, 
   query, 
   addDoc,
+  deleteDoc,
   updateDoc,
   doc,
   serverTimestamp
@@ -75,7 +76,7 @@ function CustomerFormDrawer({
 }: { 
   item: Customer | null; 
   isCreate: boolean;
-  onClose: () => void;
+  onClose: (action?: any, id?: string) => void;
   onSave: (data: Customer) => void;
 }) {
   const [formData, setFormData] = useState<any>({});
@@ -117,8 +118,8 @@ function CustomerFormDrawer({
 
   return (
     <div className="fixed inset-0 z-[100] flex justify-end font-sans text-slate-800">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => onClose()} />
+      <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300 text-slate-800">
         <header className="px-8 pt-8 bg-white border-b border-slate-100">
           <div className="flex justify-between items-start mb-6">
             <div>
@@ -127,7 +128,7 @@ function CustomerFormDrawer({
               </h2>
               <p className="text-sm text-slate-400 mt-1 font-medium">請填寫標準化欄位以確保跨產品線資料同步</p>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400">✕</button>
+            <button onClick={() => onClose()} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400">✕</button>
           </div>
           {/* 分頁切換按鈕區 */}
           <div className="flex gap-8">
@@ -202,7 +203,7 @@ function CustomerFormDrawer({
             </div>
           ) : (
             <div className="space-y-6">
-              <div className="flex justify-between items-center mb-2">
+              <div className="flex justify-between items-center mb-2 text-slate-800">
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest italic">歷史需求紀錄</h3>
                 <button onClick={addRequirement} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-indigo-700 shadow-md transition-all">＋ 新增紀錄</button>
               </div>
@@ -210,8 +211,8 @@ function CustomerFormDrawer({
               <div className="space-y-4">
                 {formData.specialRequirements?.length > 0 ? (
                   formData.specialRequirements.map((req: SpecialRequirement, idx: number) => (
-                    <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4 animate-in fade-in slide-in-from-top-2">
-                      <div className="flex gap-3">
+                    <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4 animate-in fade-in slide-in-from-top-2 text-slate-800">
+                      <div className="flex gap-3 text-slate-800">
                         <input 
                           type="date" 
                           value={req.date} 
@@ -251,7 +252,7 @@ function CustomerFormDrawer({
                           newList[idx].content = e.target.value;
                           setFormData({ ...formData, specialRequirements: newList });
                         }}
-                        className="w-full bg-slate-50 border-none rounded-xl p-4 text-sm outline-none min-h-[100px] font-medium text-slate-700 placeholder:text-slate-300 focus:ring-2 focus:ring-indigo-100 transition-all"
+                        className="w-full bg-slate-50 border-none rounded-xl p-4 text-sm outline-none min-h-[100px] font-medium text-slate-700 placeholder:text-slate-300 focus:ring-2 focus:ring-indigo-100 transition-all text-slate-800"
                       />
                     </div>
                   ))
@@ -265,8 +266,21 @@ function CustomerFormDrawer({
           )}
         </div>
 
-        <footer className="p-8 bg-white border-t border-slate-100 flex gap-4">
-          <button onClick={onClose} className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">取消</button>
+        <footer className="p-8 bg-white border-t border-slate-100 flex gap-4 text-slate-800">
+          {!isCreate && (
+            <button 
+              type="button"
+              onClick={() => {
+                if (window.confirm("🚨 警告：確定要永久刪除此客戶主檔嗎？\n刪除後，相關看板（辦公室/活動/工商）的資料連結將會失效且無法復原。")) {
+                  (onClose as any)('DELETE', item?.id); 
+                }
+              }}
+              className="px-6 py-4 rounded-2xl font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 transition-all text-xs"
+            >
+              刪除客戶
+            </button>
+          )}
+          <button onClick={() => onClose()} className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">取消</button>
           <button onClick={() => onSave(formData as Customer)} className="flex-[2] px-6 py-4 rounded-2xl font-black text-white bg-slate-900 hover:bg-black shadow-xl transition-all">確認並儲存資料</button>
         </footer>
       </div>
@@ -321,31 +335,51 @@ export default function CustomerManagementPage() {
 
   const handleSave = async (d: Customer) => {
     try {
-      const finalData = {
-        ...d,
+      const synchronizedData = {
+        companyName: d.companyName, 
+        title: d.companyName,      
+        name: d.companyName,       
+        contactPerson: d.contactPerson, 
+        customer: d.contactPerson, 
+        phone: d.phone,
+        contactPhone: d.phone,
+        taxId: d.taxId || "",
+        email: d.email || "",
         tags: d.tags || [],
         productLines: d.tags || [],
-        specialRequirements: d.specialRequirements || [] // 儲存特殊需求
+        specialRequirements: d.specialRequirements || [],
+        updatedAt: serverTimestamp()
       };
 
       if (isCreating) {
         await addDoc(collection(db, "members"), {
-          ...finalData,
-          createdAt: new Date().toISOString(),
-          updatedAt: serverTimestamp()
+          ...synchronizedData,
+          createdAt: new Date().toISOString()
         });
       } else if (selectedCustomer) {
         const docRef = doc(db, "members", selectedCustomer.id);
-        await updateDoc(docRef, {
-          ...finalData,
-          updatedAt: serverTimestamp()
-        });
+        await updateDoc(docRef, synchronizedData);
       }
+      
       setSelectedCustomer(null);
       setIsCreating(false);
+      alert("資料已成功同步更新！");
+      
     } catch (error) {
       console.error("儲存失敗:", error);
-      alert("儲存失敗，請檢查權限或網路連線");
+      alert("儲存失敗，請檢查網路連線或權限設定。");
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, "members", id));
+      setSelectedCustomer(null);
+      setIsCreating(false);
+      alert("客戶主檔已永久刪除。");
+    } catch (error) {
+      console.error("刪除失敗:", error);
+      alert("刪除失敗，請檢查網路連線或權限設定。");
     }
   };
 
@@ -359,8 +393,6 @@ export default function CustomerManagementPage() {
       return matchesSearch && matchesTag;
     });
   }, [searchQuery, selectedTag, customers]);
-
-  if (!hasMounted || loading) return <div className="flex-1 h-screen flex items-center justify-center bg-slate-50 text-slate-400 font-bold text-slate-800">載入中...</div>;
 
   const getTagStyle = (tag: string, isActive: boolean = false) => {
     const isOffice = ["辦公室出租", "辦公室管理", "辦公室案件"].includes(tag);
@@ -383,24 +415,26 @@ export default function CustomerManagementPage() {
     }
   };
 
+  if (!hasMounted || loading) return <div className="flex-1 h-screen flex items-center justify-center bg-slate-50 text-slate-400 font-bold text-slate-800 text-slate-800">載入中...</div>;
+
   return (
     <div className="flex-1 h-screen overflow-y-auto bg-slate-50/50 p-8 font-sans text-slate-800">
-      <div className="max-w-7xl mx-auto">
-        <header className="mb-10 flex justify-between items-end">
-          <div>
+      <div className="max-w-7xl mx-auto text-slate-800">
+        <header className="mb-10 flex justify-between items-end text-slate-800">
+          <div className="text-slate-800">
             <h1 className="text-3xl font-black text-slate-800 tracking-tight underline decoration-blue-500/30">客戶資料管理</h1>
             <p className="text-slate-400 mt-2 font-medium italic">集中管理跨產品線客戶全銜、窗口及財務主檔。</p>
           </div>
           <button onClick={() => setIsCreating(true)} className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-black text-sm shadow-xl hover:bg-indigo-700 transition-all active:scale-95">＋ 新增客戶主檔</button>
         </header>
 
-        <div className="mb-8 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex-1 w-full max-w-md relative">
+        <div className="mb-8 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6 text-slate-800">
+          <div className="flex-1 w-full max-w-md relative text-slate-800">
             <input type="text" placeholder="搜尋公司名稱或統編..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-4 focus:ring-blue-500/10 outline-none transition-all font-medium text-slate-800" />
             <span className="absolute left-5 top-1/2 -translate-y-1/2 text-xl">🔍</span>
           </div>
           
-          <div className="flex gap-3">
+          <div className="flex gap-3 text-slate-800">
             {PRODUCT_TAGS.map(tag => (
               <button 
                 key={tag} 
@@ -416,10 +450,10 @@ export default function CustomerManagementPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-[32px] border border-slate-200 overflow-hidden shadow-sm">
-          <table className="w-full text-left">
+        <div className="bg-white rounded-[32px] border border-slate-200 overflow-hidden shadow-sm text-slate-800">
+          <table className="w-full text-left text-slate-800">
             <thead className="bg-slate-50/80 border-b border-slate-100 text-slate-800">
-              <tr>
+              <tr className="text-slate-800">
                 <th className="px-8 py-6 font-black text-slate-500 text-xs uppercase tracking-widest">公司主體 / 統編</th>
                 <th className="px-8 py-6 font-black text-slate-500 text-xs uppercase tracking-widest">聯絡窗口</th>
                 <th className="px-8 py-6 font-black text-slate-500 text-xs uppercase tracking-widest">標籤</th>
@@ -428,25 +462,31 @@ export default function CustomerManagementPage() {
             </thead>
             <tbody className="divide-y divide-slate-50 text-slate-800">
               {filtered.map(item => (
-                <tr key={item.id} className="hover:bg-slate-50/50 transition-colors group">
+                <tr key={item.id} className="hover:bg-slate-50/50 transition-colors group text-slate-800">
                   <td className="px-8 py-8 text-slate-800">
                     <div className="font-black text-slate-800 text-lg group-hover:text-blue-600 transition-colors">{item.companyName}</div>
-                    <div className="text-xs text-slate-400 font-mono mt-1 font-bold italic">TAX ID: {item.taxId}</div>
+                    <div className="text-xs text-slate-400 font-mono mt-1 font-bold italic text-slate-400">TAX ID: {item.taxId}</div>
                   </td>
                   <td className="px-8 py-8 text-slate-800">
                     <div className="text-slate-700 font-bold">{item.contactPerson}</div>
-                    <div className="text-xs text-slate-400 font-medium mt-1">{item.phone}</div>
+                    <div className="text-xs text-slate-400 font-medium mt-1 text-slate-400">{item.phone}</div>
                   </td>
                   <td className="px-8 py-8 text-slate-800">
-                    <div className="flex gap-2">
-                      {item.tags.length > 0 ? item.tags.map(t => {
-                        const displayText = ["辦公室出租", "辦公室管理", "辦公室案件"].includes(t) ? "辦公室出租" : t;
-                        return (
-                          <span key={t} className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase ${getTagStyle(t)}`}>
+                    <div className="flex gap-2 text-slate-800">
+                      {item.tags.length > 0 ? (
+                        Array.from(new Set(item.tags.map(t => 
+                          ["辦公室出租", "辦公室管理", "辦公室案件"].includes(t) ? "辦公室出租" : t
+                        ))).map(displayText => (
+                          <span 
+                            key={displayText} 
+                            className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase ${getTagStyle(displayText)}`}
+                          >
                             {displayText}
                           </span>
-                        );
-                      }) : <span className="text-slate-300 text-xs italic">未分類</span>}
+                        ))
+                      ) : (
+                        <span className="text-slate-300 text-xs italic text-slate-300">未分類</span>
+                      )}
                     </div>
                   </td>
                   <td className="px-8 py-8 text-center text-slate-800">
@@ -457,11 +497,24 @@ export default function CustomerManagementPage() {
             </tbody>
           </table>
           {filtered.length === 0 && (
-            <div className="p-20 text-center text-slate-300 font-bold italic">找不到符合條件的客戶資料</div>
+            <div className="p-20 text-center text-slate-300 font-bold italic text-slate-300">找不到符合條件的客戶資料</div>
           )}
         </div>
       </div>
-      <CustomerFormDrawer item={selectedCustomer} isCreate={isCreating} onClose={() => { setSelectedCustomer(null); setIsCreating(false); }} onSave={handleSave} />
+
+      <CustomerFormDrawer 
+        item={selectedCustomer} 
+        isCreate={isCreating} 
+        onSave={handleSave} 
+        onClose={(action?: any, id?: string) => { 
+          if (action === 'DELETE' && id) {
+            handleDelete(id); 
+          } else {
+            setSelectedCustomer(null); 
+            setIsCreating(false); 
+          }
+        }} 
+      />
     </div>
   );
 }

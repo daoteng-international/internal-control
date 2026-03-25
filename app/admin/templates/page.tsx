@@ -54,7 +54,7 @@ const INITIAL_TEMPLATES = [
 顧問輔導 ✅ 深耕十年，專業經驗
 後續支援 ✅ 顧客成功導向`
   },
-{ 
+  { 
     label: "S2 新手小白 A", 
     category: "工商登記", 
     content: `Hello, {username}
@@ -90,7 +90,7 @@ const INITIAL_TEMPLATES = [
 
 期待您的公司設立成功～～讓我們當您最強後盾！`
   },
-{ 
+  { 
     label: "S2 B老手創業 ", 
     category: "工商登記", 
     content: `Hello, {username}
@@ -115,7 +115,7 @@ const INITIAL_TEMPLATES = [
 變更登記說明:https://reurl.cc/lab6qd
 讓道騰協助貴公司快速完成地址遷移`
   },
-{ 
+  { 
     label: "S3 報價建議 - 報價計算器", 
     category: "工商登記", 
     content: `親愛的 {username} 您好！
@@ -145,7 +145,7 @@ https://share-na2.hsforms.com/17nO5cGLkTIWSsVH9z-dBow3gltz
 3. 公司大小章： 用於合約簽署，建議先刻好。
 影片說明:  https://reurl.cc/W80Wre`
   },
-{ 
+  { 
     label: "S4 追蹤關懷 - 報價後3天內", 
     category: "工商登記", 
     content: `{username}您好！
@@ -161,7 +161,7 @@ https://share-na2.hsforms.com/17nO5cGLkTIWSsVH9z-dBow3gltz
 
 在道騰，我們不只提供地址，更希望成為您創業路上的「神隊友」。 若有任何預算或地點的考量，歡迎隨時跟我說，我們都可以討論怎麼協助您喔！`
   },
-{ 
+  { 
     label: "S5-A 簽約準備 - 民權｜準備文件 合約", 
     category: "工商登記", 
     content: `{username}太好了！歡迎加入道騰的大家庭 🤝
@@ -201,7 +201,7 @@ https://share-na2.hsforms.com/17nO5cGLkTIWSsVH9z-dBow3gltz
 如有其他問題（如政府查驗、會計師代辦、報稅開戶流程等），我們也能提供配套資訊與專業協助。
 以上資料完備簽約僅需約 15 分鐘。`
   },
-{ 
+  { 
     label: "S5 簽約準備 -B 四維館準備文件", 
     category: "工商登記", 
     content: `{username}太好了！歡迎加入道騰的大家庭 🤝
@@ -241,7 +241,7 @@ https://share-na2.hsforms.com/17nO5cGLkTIWSsVH9z-dBow3gltz
 如有其他問題（如政府查驗、會計師代辦、報稅開戶流程等），我們也能提供配套資訊與專業協助。
 以上資料完備簽約僅需約 15 分鐘。`
   },
- { 
+  { 
     label: "S6 簽約完成感謝", 
     category: "工商登記", 
     content: `感謝 {username} 今天撥空前來簽約，合作愉快！🎊 很開心有為您服務的機會
@@ -312,7 +312,8 @@ export default function AdminTemplatesPage() {
   const [filterCategory, setFilterCategory] = useState<string>("全部");
 
   useEffect(() => {
-    const q = query(collection(db, "copyTemplates"), orderBy("order", "asc"));
+    // 💡 修正：依照 updatedAt 排序，確保最新寫完的在最上面，並且監聽即時更新
+    const q = query(collection(db, "copyTemplates"), orderBy("label", "asc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       if (!snapshot.empty) {
         setTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -324,35 +325,6 @@ export default function AdminTemplatesPage() {
     return () => unsubscribe();
   }, []);
 
-const handleInitialize = async () => {
-    if (!confirm("⚠️ 注意：這將會先『清空』目前雲端所有範本，再重新匯入包含『工商登記』與『辦公室』的最新預設值。確定要執行嗎？")) return;
-    
-    try {
-      // 1. 抓取目前 copyTemplates 集合中的所有文件
-      const snapshot = await getDocs(collection(db, "copyTemplates"));
-      
-      // 2. 執行迴圈將舊文件一一刪除
-      for (const d of snapshot.docs) {
-        await deleteDoc(doc(db, "copyTemplates", d.id));
-      }
-
-      // 3. 重新依照 INITIAL_TEMPLATES 陣列寫入新資料
-      for (let i = 0; i < INITIAL_TEMPLATES.length; i++) {
-        await addDoc(collection(db, "copyTemplates"), {
-          ...INITIAL_TEMPLATES[i],
-          order: i,
-          updatedAt: serverTimestamp()
-        });
-      }
-
-      alert("🎉 清除並匯入成功！現在畫面已是最新且唯一的資料。");
-      window.location.reload(); // 重新整理頁面以抓取最新資料
-    } catch (e) {
-      console.error("更新失敗:", e);
-      alert("匯入失敗，請確認 Firebase 權限。");
-    }
-  };
-
   const handleUpdate = async (id: string, field: string, value: string) => {
     if (!id || id.startsWith('init-')) return;
     try {
@@ -360,6 +332,29 @@ const handleInitialize = async () => {
       await updateDoc(docRef, { [field]: value, updatedAt: serverTimestamp() });
     } catch (e) {
       console.error("更新失敗:", e);
+    }
+  };
+
+  const handleAddNew = async () => {
+    try {
+      const newLabel = prompt("請輸入新範本標題：", "新範本標題");
+      if (!newLabel) return;
+      
+      const category = filterCategory === "全部" ? "辦公室出租" : filterCategory;
+      
+      // 💡 修正：確保寫入時帶有正確的 updatedAt，系統才會立刻偵測並儲存顯示
+      await addDoc(collection(db, "copyTemplates"), {
+        label: newLabel,
+        category: category,
+        content: "請在此輸入內容...",
+        order: templates.length,
+        updatedAt: serverTimestamp()
+      });
+      
+      alert("✅ 已新增空白範本，內容會自動即時儲存。");
+    } catch (e) {
+      console.error("新增失敗:", e);
+      alert("新增失敗");
     }
   };
 
@@ -382,13 +377,13 @@ const handleInitialize = async () => {
           </div>
           
           <div className="flex items-center gap-4">
-            {/* 修改後：直接顯示，不受資料庫狀態限制 */}
-            <button 
-            onClick={handleInitialize}
-            className="text-[10px] font-black px-3 py-2 bg-amber-500 text-white rounded-xl shadow-lg hover:bg-amber-600 transition-all"
+            <button
+                onClick={handleAddNew}
+                className="text-[10px] font-black px-4 py-2 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 transition-all"
             >
-            🚀 重新整理匯入
+                ➕ 新增範本
             </button>
+                
 
             <div className="flex gap-2">
               {["全部", "辦公室出租", "工商登記", "活動管理"].map(cat => (
@@ -418,7 +413,6 @@ const handleInitialize = async () => {
                     onChange={(e) => handleUpdate(item.id, "label", e.target.value)}
                   />
                 </div>
-                {/* 唯讀分類標籤 */}
                 <div className="text-[10px] font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded-lg border border-slate-200 cursor-default select-none">
                   {item.category === "辦公室出租" && "🏢 辦公室出租"}
                   {item.category === "工商登記" && "⚖️ 工商登記"}
@@ -426,7 +420,6 @@ const handleInitialize = async () => {
                 </div>
               </div>
 
-              {/* 具備本地快取功能的編輯器 */}
               <AutoResizeTextarea 
                 value={item.content}
                 onChange={(val) => handleUpdate(item.id, "content", val)}

@@ -18,9 +18,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { createPortal } from "react-dom";
 
 // --- 引入 Firebase 實時功能 ---
-import { db, auth } from "@/lib/firebase"; 
-import { onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
+import { db, auth} from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
 import { 
   collection, 
   onSnapshot, 
@@ -298,6 +298,30 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
     await addDoc(collection(db, "cases", item.id, "logs"), { action, user: currentUser, timestamp: serverTimestamp() });
   };
 
+  // ✅ 這是修正後不會報錯的版本
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // 💡 直接使用瀏覽器暫存網址，不經過 Firebase Storage
+    const newAttachment: Attachment = {
+      name: file.name,
+      url: URL.createObjectURL(file), // 💡 產生暫時網址
+      uploadedAt: new Date().toISOString()
+    };
+
+    const updatedAttachments = [...(formData.attachments || []), newAttachment];
+    
+    // 更新本地顯示
+    setFormData(prev => ({ ...prev, attachments: updatedAttachments }));
+    
+    if (!isCreate) {
+      addLogLocal(`已讀取附件預覽: ${file.name}`);
+    }
+    
+    alert(`已讀取「${file.name}」預覽（重新整理後失效）`);
+  };
+
   const handleToggleTodo = async (todoId: string) => {
     if (!item) return;
     const updatedTodos = (formData.todos || []).map(t => {
@@ -374,12 +398,64 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
                     <input value={formData.roomNo || ""} onChange={e => setFormData({...formData, roomNo: e.target.value})} className="w-full border-b py-2 text-sm outline-none focus:border-blue-600 text-slate-800" placeholder="例如：A01" />
                   </div>
                   <div className="col-span-2 text-slate-800">
-                    <label className="text-xs font-bold text-slate-500 block mb-1">信件編號</label>
-                    <input value={formData.mailNo || ""} onChange={e => setFormData({...formData, mailNo: e.target.value})} className="w-full border-b py-2 text-sm outline-none focus:border-blue-600 text-slate-800" placeholder="輸入信件掛號編號或備註" />
-                  </div>
-                  {/* 💡 貼到這裡結束 */}
-                </div>
-              </section>
+                                      <label className="text-xs font-bold text-slate-500 block mb-1">信件編號</label>
+                                      <input value={formData.mailNo || ""} onChange={e => setFormData({...formData, mailNo: e.target.value})} className="w-full border-b py-2 text-sm outline-none focus:border-blue-600 text-slate-800" placeholder="輸入信件掛號編號或備註" />
+                                    </div>
+
+                                    {/* 💡 關鍵新增：卡片建立時間 (參考工商登記邏輯) */}
+                                    <div className="col-span-2 text-slate-800">
+                                      <label className="text-xs font-bold text-slate-500 block mb-1">卡片建立時間 (僅供查看)</label>
+                                      <div className="w-full border-b py-2 text-sm bg-slate-100 text-slate-400 cursor-not-allowed font-mono px-1">
+                                        {formData.createdAt ? new Date(formData.createdAt).toLocaleString('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : "-"}
+                                      </div>
+                                    </div>
+
+                                    {/* 💡 附件區塊開始 */}
+                                    <div className="col-span-2 border-t pt-6 mt-2">
+                                      <div className="flex justify-between items-center mb-4 border-l-4 border-red-500 pl-3 bg-red-50 py-2 rounded-r-lg">
+                                        <label className="text-sm font-black text-red-600">合約附件管理</label>
+                                        <label className="cursor-pointer bg-red-500 text-white text-[10px] font-black px-4 py-1.5 rounded-xl hover:bg-red-600 shadow-md transition-all active:scale-95">
+                                          + 選取檔案上傳
+                                          <input type="file" className="hidden" onChange={handleFileUpload} />
+                                        </label>
+                                      </div>
+
+                                      <div className="space-y-3">
+                                        {(formData.attachments || []).map((file, idx) => (
+                                          <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 hover:border-red-200 transition-colors">
+                                            <div className="flex flex-col flex-1 truncate pr-4">
+                                              <span className="text-xs font-bold text-slate-700 truncate">{file.name}</span>
+                                              <span className="text-[9px] text-slate-400 italic mt-1">{file.uploadedAt?.substring(0, 10)} 上傳</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                              <a href={file.url} target="_blank" className="text-[10px] font-black bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 text-blue-600 hover:bg-blue-50 transition-all">檢視</a>
+                                              <button 
+                                                type="button"
+                                                onClick={() => {
+                                                  setFormData(prev => ({
+                                                    ...prev,
+                                                    attachments: (prev.attachments || []).filter((_, i) => i !== idx)
+                                                  }));
+                                                }}
+                                                className="text-[10px] font-black bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 text-red-500 hover:bg-red-50"
+                                              >
+                                                移除
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ))}
+
+                                        {/* 💡 修正：將「無附件提示」正確放入區塊內 */}
+                                        {(!formData.attachments || formData.attachments.length === 0) && (
+                                          <div className="py-10 text-center border-2 border-dashed border-slate-100 rounded-[32px] bg-slate-50/30">
+                                            <p className="text-xs font-bold text-slate-400 italic">目前尚未上傳任何合約附件</p>
+                                            <p className="text-[10px] text-slate-300 mt-2 uppercase tracking-widest font-black">Waiting for documents...</p>
+                                          </div>
+                                        )}
+                                      </div> {/* 關閉 space-y-3 */}
+                                    </div>   {/* 關閉 col-span-2 border-t */}
+                                  </div>     {/* 關閉 grid-cols-2 */}
+                                </section>   {/* 💡 關閉基本資訊 section */}
 
               <section className="space-y-4">
                 <h3 className="text-sm font-bold border-l-4 border-emerald-500 pl-3 uppercase tracking-widest">財務與週期</h3>
@@ -548,17 +624,29 @@ export default function CasesPage() {
   const [currentUser, setCurrentUser] = useState<string>("ADMIN");
 
   useEffect(() => {
-    setHasMounted(true);
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => { 
-      if (!user) router.push("/login"); 
-      else setCurrentUser(user.email || user.displayName || "Unknown User");
-    });
-    const unsubscribeData = onSnapshot(query(collection(db, "cases"), orderBy("createdAt", "desc")), (snapshot) => {
-      setCards(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as LeaseCard[]);
-      setLoading(false);
-    });
-    return () => { unsubscribeAuth(); unsubscribeData(); };
-  }, [router]);
+      setHasMounted(true);
+      const unsubscribeAuth = onAuthStateChanged(auth, (user) => { 
+        if (!user) router.push("/login"); 
+        else setCurrentUser(user.email || user.displayName || "Unknown User");
+      });
+      
+      const unsubscribeData = onSnapshot(query(collection(db, "cases"), orderBy("createdAt", "desc")), (snapshot) => {
+        const newCards = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as LeaseCard[];
+        setCards(newCards);
+        setLoading(false);
+
+        // 💡 關鍵新增：偵測網址參數並自動開啟彈窗
+        const params = new URLSearchParams(window.location.search);
+        const idFromUrl = params.get('id');
+        if (idFromUrl) {
+          setSelectedId(idFromUrl);
+          // 選項：清除網址參數，避免重新整理時重複彈出
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      });
+
+      return () => { unsubscribeAuth(); unsubscribeData(); };
+    }, [router]);
 
   const addLogExternal = async (caseId: string, action: string) => {
     await addDoc(collection(db, "cases", caseId, "logs"), { action, user: currentUser, timestamp: serverTimestamp() });
@@ -581,10 +669,14 @@ export default function CasesPage() {
       const memberSnap = await getDocs(memberQuery);
       const memberInfo = {
         companyName: data.companyName,
+        totalContractAmount: data.totalContractAmount || 0,           
         contactPerson: data.contactPerson,
         phone: data.phone || "",
         taxId: data.taxId || "",
-        updatedAt: serverTimestamp(),
+        // 💡 補上這兩行，合約中心才看得到租期
+        contractStartDate: data.contractStartDate || "",
+        contractEndDate: data.contractEndDate || "",
+        updatedAt: serverTimestamp(),       
       };
 
       if (memberSnap.empty) {

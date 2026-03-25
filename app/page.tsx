@@ -75,7 +75,15 @@ function DetailList({ title, list, themeColor }: { title: string; list: any[]; t
             </thead>
             <tbody className="divide-y divide-slate-100">
               {list.map((item, i) => (
-                <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                <tr 
+                  key={i} 
+                  className="hover:bg-slate-50/50 transition-colors cursor-pointer"
+                  onClick={() => {
+                    const path = item.source === '辦公室' ? '/cases' : 
+                                 item.source === '工商' ? '/registrations' : '/events';
+                    window.location.href = `${path}?id=${item.id}`;
+                  }}
+                >
                   <td className="px-8 py-5">
                     <span className={`text-[9px] font-black px-2.5 py-1.5 rounded uppercase tracking-tight ${
                       item.source === '辦公室' ? 'bg-blue-100 text-blue-700' : 
@@ -84,9 +92,11 @@ function DetailList({ title, list, themeColor }: { title: string; list: any[]; t
                       {item.source}
                     </span>
                   </td>
-                  <td className="px-4 py-5 font-bold text-slate-900 text-sm">{item.title || item.name}</td>
+                  <td className="px-4 py-5 font-bold text-slate-900 text-sm">{item.title || item.name || item.companyName}</td>
                   <td className="px-4 py-5 text-sm text-slate-600 font-medium">{item.customer || item.contactPerson}</td>
-                  <td className="px-4 py-5 text-sm text-slate-500 font-mono tracking-tight">{item.createdAt || "-"}</td>
+                  <td className="px-4 py-5 text-sm text-slate-500 font-mono tracking-tight">
+                    {item.createdAt ? item.createdAt.substring(0, 10) : "-"}
+                  </td>
                   <td className="px-4 py-5 text-sm font-bold text-slate-800">{formatCurrency(item.amount || 0)}</td>
                   <td className="px-8 py-5 text-xs text-slate-500 font-medium">
                     {item.isOverdue ? <span className="text-red-600 font-extrabold bg-red-100 px-2 py-1 rounded">逾期 {item.overdueDays} 天</span> : (item.stage || "進行中")}
@@ -101,7 +111,6 @@ function DetailList({ title, list, themeColor }: { title: string; list: any[]; t
   );
 }
 
-// --- 回歸版：快速進度條 ---
 function MetricProgress({ label, value, percentage, colorClass }: any) {
   return (
     <div className="group border border-slate-100 rounded-2xl p-5 bg-white transition-all hover:border-blue-100 hover:shadow-sm">
@@ -119,7 +128,6 @@ function MetricProgress({ label, value, percentage, colorClass }: any) {
   );
 }
 
-// --- 大區塊容器 ---
 function DataSection({ title, tag, themeColor, children }: any) {
   const themes: any = {
     blue: "border-blue-100 bg-blue-50 text-blue-600",
@@ -172,17 +180,34 @@ export default function ProfessionalDashboard() {
       return true;
     };
 
-    const allProcessed = [...cases, ...members].map(item => ({
+    const allProcessed = [
+      ...cases.map(c => ({ ...c, source: '辦公室' })), 
+      ...members.map(m => ({ 
+        ...m, 
+        source: m.productLines?.includes('工商登記') ? '工商' : '活動' 
+      }))
+    ].map(item => ({
       ...item,
-      source: item.source === '辦公室' ? '辦公室' : (item.productLines?.includes('工商登記') ? '工商' : '活動'),
       amount: item.totalContractAmount || 0
     }));
 
     const fullOverdue = allProcessed.filter(item => {
-      const isTargetStage = item.stage === 'S5' || item.stage === 'S7';
-      if (!isTargetStage || !item.stageStartedAt) return false;
-      return Math.floor((nowTime - new Date(item.stageStartedAt).getTime()) / (1000 * 60 * 60 * 24)) >= 3;
-    }).map(item => ({ ...item, isOverdue: true, overdueDays: Math.floor((nowTime - new Date(item.stageStartedAt).getTime()) / (1000 * 60 * 60 * 24)) }));
+      const isFinished = ['S6', 'S8', 'S11', '已結案'].includes(item.stage);
+      if (isFinished || !item.stageStartedAt) return false;
+
+      const stageDate = new Date(item.stageStartedAt);
+      if (isNaN(stageDate.getTime())) return false;
+
+      const diffTime = nowTime - stageDate.getTime();
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      
+      const overdueThreshold = item.source === '辦公室' ? 7 : 3;
+      return diffDays >= overdueThreshold;
+    }).map(item => {
+      const stageDate = new Date(item.stageStartedAt);
+      const diffDays = Math.floor((nowTime - stageDate.getTime()) / (1000 * 60 * 60 * 24));
+      return { ...item, isOverdue: true, overdueDays: diffDays };
+    });
 
     const timeFilteredData = allProcessed.filter(item => checkTime(item.createdAt));
     const finishedByTime = timeFilteredData.filter(item => item.stage === 'S6' || item.stage === 'S8');
@@ -203,13 +228,36 @@ export default function ProfessionalDashboard() {
       return { rev, rate, count: finished.length };
     };
 
+    const currentRate = timeFilteredData.length > 0 ? (finishedByTime.length / timeFilteredData.length) * 100 : 0;
+
+    const getPrevRate = () => {
+      const prevData = allProcessed.filter(item => {
+        const d = new Date(item.createdAt);
+        if (timeFilter === "今日") return d >= new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1) && d < startOfDay;
+        if (timeFilter === "本週") return d >= new Date(now.getFullYear(), now.getMonth(), now.getDate() - 14) && d < startOfWeek;
+        return d >= new Date(now.getFullYear(), now.getMonth() - 1, 1) && d < startOfMonth;
+      });
+      const prevFinished = prevData.filter(i => i.stage === 'S6' || i.stage === 'S8');
+      return prevData.length > 0 ? (prevFinished.length / prevData.length) * 100 : 0;
+    };
+
+    const prevRate = getPrevRate();
+    const rateDiff = currentRate - prevRate; 
+
     return {
-      analytics: { totalRevenue: totalRev, overdueCount: fullOverdue.length, totalActive: activeByTime.length },
+      // 💡 修正：將 trendText 與 trendType 包裝進 analytics 物件中
+      analytics: { 
+        totalRevenue: totalRev, 
+        overdueCount: fullOverdue.length, 
+        totalActive: timeFilteredData.length,
+        trendText: `${rateDiff >= 0 ? "↑" : "↓"} ${Math.abs(rateDiff).toFixed(1)}%`,
+        trendType: rateDiff >= 0 ? "up" : "down"
+      },
       overdueList: fullOverdue, revenueList: finishedByTime, activeList: activeByTime,
       officeStats: bldStats,
       regStats: getProductStats('工商'),
       eventStats: getProductStats('活動'),
-      conversionRate: timeFilteredData.length > 0 ? (finishedByTime.length / timeFilteredData.length) * 100 : 0
+      conversionRate: currentRate
     };
   }, [cases, members, timeFilter]);
 
@@ -235,7 +283,13 @@ export default function ProfessionalDashboard() {
           <AnalyticCard title={`成交業績 (${timeFilter})`} value={formatCurrency(analytics.totalRevenue)} hint="點擊查看成交清單" onClick={() => toggleView('revenue')} type={activeView === 'revenue' ? 'success' : 'default'} trend="LIVE" />
           <AnalyticCard title="逾期風險監控" value={analytics.overdueCount} hint="顯示全系統未處理風險" type={analytics.overdueCount > 0 ? "danger" : "default"} trend={analytics.overdueCount > 0 ? "需核閱" : "正常"} trendType={analytics.overdueCount > 0 ? "down" : "up"} onClick={() => toggleView('overdue')} />
           <AnalyticCard title={`新增在辦案件 (${timeFilter})`} value={analytics.totalActive} hint="點擊查看本期新進案件" onClick={() => toggleView('active')} />
-          <AnalyticCard title="平均轉換率" value={`${Math.round(conversionRate)}%`} hint="本期結案轉化指標" trend="↑ 2.1%" />
+          <AnalyticCard 
+            title="平均轉換率" 
+            value={`${Math.round(conversionRate)}%`} 
+            hint={`${timeFilter}期結案轉化指標`} 
+            trend={analytics.trendText}  
+            trendType={analytics.trendType} 
+          />
         </div>
 
         {activeView === 'overdue' && <DetailList title="🚨 全系統逾期風險總覽" list={overdueList} themeColor="red" />}
@@ -243,8 +297,7 @@ export default function ProfessionalDashboard() {
         {activeView === 'active' && <DetailList title={`📁 本期新進活躍案件 (${timeFilter})`} list={activeList} themeColor="blue" />}
 
         <div className="space-y-12">
-          
-          <DataSection title="辦公室租賃館別營收貢獻" tag="OFFICE LINE" themeColor="blue">
+          <DataSection title={`辦公室租賃館別營收貢獻 (${timeFilter})`} tag="OFFICE LINE" themeColor="blue">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8">
               {officeStats.map((s, i) => (
                 <MetricProgress key={s.name} label={s.name} value={formatCurrency(s.amt)} percentage={analytics.totalRevenue > 0 ? (s.amt/analytics.totalRevenue)*100 : 0} colorClass={["bg-blue-600","bg-indigo-500","bg-purple-500","bg-violet-500","bg-sky-500"][i]} />
@@ -255,29 +308,28 @@ export default function ProfessionalDashboard() {
           <DataSection title="工商登記績效指標" tag="REGISTRATION" themeColor="emerald">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
               <div className="space-y-8">
-                <MetricProgress label="當期成交業績" value={formatCurrency(regStats.rev)} percentage={analytics.totalRevenue > 0 ? (regStats.rev/analytics.totalRevenue)*100 : 0} colorClass="bg-emerald-600" />
-                <MetricProgress label="當期成交轉換率" value={`${Math.round(regStats.rate)}%`} percentage={regStats.rate} colorClass="bg-emerald-500" />
+                <MetricProgress label={`${timeFilter}成交業績`} value={formatCurrency(regStats.rev)} percentage={analytics.totalRevenue > 0 ? (regStats.rev/analytics.totalRevenue)*100 : 0} colorClass="bg-emerald-600" />
+                <MetricProgress label={`${timeFilter}成交轉換率`} value={`${Math.round(regStats.rate)}%`} percentage={regStats.rate} colorClass="bg-emerald-500" />
               </div>
               <div className="p-8 bg-emerald-50/50 rounded-3xl border border-emerald-100 shadow-inner flex flex-col items-center justify-center h-full min-h-[220px]">
-                <p className="text-xs font-bold text-emerald-800/70 uppercase mb-3 tracking-wider">當期成交件數</p>
+                <p className="text-xs font-bold text-emerald-800/70 uppercase mb-3 tracking-wider">{timeFilter}成交件數</p>
                 <div className="text-6xl font-black text-emerald-700">{regStats.count} <span className="text-base font-medium text-emerald-500/80">件</span></div>
               </div>
             </div>
           </DataSection>
 
-          <DataSection title="活動場租績效指標" tag="EVENT SPACE" themeColor="amber">
+          <DataSection title="活動管理績效指標" tag="EVENT SPACE" themeColor="amber">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
               <div className="space-y-8">
-                <MetricProgress label="當期成交業績" value={formatCurrency(eventStats.rev)} percentage={analytics.totalRevenue > 0 ? (eventStats.rev/analytics.totalRevenue)*100 : 0} colorClass="bg-amber-600" />
-                <MetricProgress label="當期成交轉換率" value={`${Math.round(eventStats.rate)}%`} percentage={eventStats.rate} colorClass="bg-amber-500" />
+                <MetricProgress label={`${timeFilter}成交業績`} value={formatCurrency(eventStats.rev)} percentage={analytics.totalRevenue > 0 ? (eventStats.rev/analytics.totalRevenue)*100 : 0} colorClass="bg-amber-600" />
+                <MetricProgress label={`${timeFilter}成交轉換率`} value={`${Math.round(eventStats.rate)}%`} percentage={eventStats.rate} colorClass="bg-amber-500" />
               </div>
               <div className="p-8 bg-amber-50/50 rounded-3xl border border-amber-100 shadow-inner flex flex-col items-center justify-center h-full min-h-[220px]">
-                <p className="text-xs font-bold text-amber-800/70 uppercase mb-3 tracking-wider">當期成交件數</p>
+                <p className="text-xs font-bold text-amber-800/70 uppercase mb-3 tracking-wider">{timeFilter}成交件數</p>
                 <div className="text-6xl font-black text-amber-700">{eventStats.count} <span className="text-base font-medium text-amber-500/80">件</span></div>
               </div>
             </div>
           </DataSection>
-
         </div>
       </div>
       <style dangerouslySetInnerHTML={{ __html: `.custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; } .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }` }} />
