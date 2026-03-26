@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { db } from "@/lib/firebase"; 
+import { db, auth } from "@/lib/firebase"; 
 import { useAuth } from "@/lib/auth-context"; 
+import { sendPasswordResetEmail } from "firebase/auth"; // 💡 引入重設密碼功能
 import { 
   collection, 
   onSnapshot, 
@@ -44,7 +45,8 @@ export default function UserManagementPage() {
     role: "staff" as Role,
     phone: "",
     extension: "",
-    department: "未分配" as Department
+    department: "未分配" as Department,
+    password: "" // 💡 新增密碼欄位
   });
   
   const currentUserId = profile?.uid || "bfWKqxutqcNp3xEBUCbTNnoB3YQ2"; 
@@ -77,17 +79,19 @@ export default function UserManagementPage() {
         role: user.role,
         phone: user.phone || "",
         extension: user.extension || "",
-        department: user.department || "未分配"
+        department: user.department || "未分配",
+        password: "" // 編輯模式下密碼欄位不預填
       });
     } else {
       setEditingUser(null);
-      setFormData({ displayName: "", email: "", role: "staff", phone: "", extension: "", department: "未分配" });
+      setFormData({ displayName: "", email: "", role: "staff", phone: "", extension: "", department: "未分配", password: "" });
     }
     setShowModal(true);
   };
 
   const handleSaveUser = async () => {
     if (!formData.displayName || !formData.email) return alert("請填寫姓名與 Email");
+    if (!editingUser && !formData.password) return alert("請設定初始密碼"); // 新增帳號時檢查密碼
     
     try {
       if (editingUser) {
@@ -109,7 +113,12 @@ export default function UserManagementPage() {
         });
       } else {
         await addDoc(collection(db, "users"), {
-          ...formData,
+          displayName: formData.displayName,
+          email: formData.email,
+          role: formData.role,
+          phone: formData.phone,
+          extension: formData.extension,
+          department: formData.department,
           createdAt: serverTimestamp(),
           status: "ACTIVE"
         });
@@ -124,10 +133,21 @@ export default function UserManagementPage() {
       }
 
       setShowModal(false);
-      alert(editingUser ? "資料更新成功！" : "帳號建立成功！");
+      alert(editingUser ? "資料更新成功！" : "帳號建立成功！\n注意：此系統僅建立資料，請務必於 Firebase Auth 手動建立對應帳密或請同仁使用此密碼。");
     } catch (e) {
       console.error(e);
       alert("操作失敗");
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!formData.email) return;
+    try {
+      await sendPasswordResetEmail(auth, formData.email);
+      alert(`已成功發送重設密碼郵件至：${formData.email} \n請提醒同仁收信。`);
+    } catch (e) {
+      console.error(e);
+      alert("發送重設郵件失敗");
     }
   };
 
@@ -239,6 +259,31 @@ export default function UserManagementPage() {
                   <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Email 地址 {editingUser && "(唯讀)"}</label>
                   <input className={`w-full border rounded-xl p-3 text-sm mt-1 font-medium ${editingUser ? "bg-slate-100 text-slate-400 cursor-not-allowed border-transparent" : "bg-slate-50 border-slate-100 focus:ring-2 focus:ring-indigo-500"}`} value={formData.email} readOnly={!!editingUser} onChange={e => setFormData({...formData, email: e.target.value})} />
                 </div>
+
+                {/* 💡 密碼管理區塊 */}
+                {editingUser ? (
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">帳號安全管理</label>
+                    <button 
+                      onClick={handleResetPassword}
+                      className="w-full mt-1 py-3 border border-indigo-200 text-indigo-600 rounded-xl text-[11px] font-bold hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2"
+                    >
+                      📧 發送重設密碼信件給該同仁
+                    </button>
+                  </div>
+                ) : (
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">初始登入密碼</label>
+                    <input 
+                      type="password"
+                      className="w-full border border-slate-100 rounded-xl p-3 text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500 mt-1 font-medium" 
+                      placeholder="請設定至少 6 位數密碼"
+                      value={formData.password} 
+                      onChange={e => setFormData({...formData, password: e.target.value})} 
+                    />
+                  </div>
+                )}
+
                 <div className="col-span-1">
                   <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">手機電話</label>
                   <input className="w-full border rounded-xl p-3 text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500 mt-1 font-medium" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
