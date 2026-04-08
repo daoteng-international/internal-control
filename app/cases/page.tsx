@@ -347,6 +347,10 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
       alert("⚠️ 請檢查必填欄位！");
       return;
     }
+    if (!formData.taxId) {
+      const ok = confirm("⚠️ 未填寫統編\n\n系統將無法比對現有客戶，會直接建立一筆新資料。\n\n確定不填統編直接儲存嗎？");
+      if (!ok) return;
+    }
     onSave(formData as LeaseCard);
   };
 
@@ -665,7 +669,10 @@ export default function CasesPage() {
         await updateDoc(doc(db, "cases", id), saveData);
       }
 
-      const memberQuery = query(collection(db, "members"), where("companyName", "==", data.companyName));
+      const memberQuery = query(
+        collection(db, "members"), 
+        where(data.taxId ? "taxId" : "companyName", "==", data.taxId || data.companyName)
+      );
       const memberSnap = await getDocs(memberQuery);
       const memberInfo = {
         companyName: data.companyName,

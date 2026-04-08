@@ -195,7 +195,7 @@ function CustomerFormDrawer({
                     <input value={formData.bestContactTime || ""} onChange={e => setFormData({...formData, bestContactTime: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-500 mb-2 block uppercase tracking-widest">統一編號</label>
+                    <RequiredLabel>統編</RequiredLabel>
                     <input value={formData.taxId || ""} onChange={e => setFormData({...formData, taxId: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" />
                   </div>
                 </div>
@@ -334,6 +334,11 @@ export default function CustomerManagementPage() {
   }, []);
 
   const handleSave = async (d: Customer) => {
+    if (!d.companyName) return alert("請填寫公司名稱");
+    if (!d.taxId) {
+      const ok = confirm("⚠️ 未填寫統編\n\n系統將無法比對現有客戶，會直接建立一筆新資料。\n\n確定不填統編直接儲存嗎？");
+      if (!ok) return;
+    }
     try {
       const synchronizedData = {
         companyName: d.companyName, 

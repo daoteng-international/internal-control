@@ -574,6 +574,10 @@ export default function RegistrationsPage() {
   const handleSignOff = async (cardId: string) => { await addDoc(collection(db, "members", cardId, "logs"), { action: "主管已核閱逾期風險並簽署", user: currentUser, timestamp: serverTimestamp() }); setSignedOffOverdue(p => [...p, cardId]); };
 
   const handleSave = async (data: RegCard) => {
+    if (!data.taxId) {
+      const ok = confirm("⚠️ 未填寫統編\n\n系統將無法比對現有客戶，會直接建立一筆新資料。\n\n確定不填統編直接儲存嗎？");
+      if (!ok) return;
+    }
     const { id, ...rest } = data;
     const payload = { 
       ...rest, 
