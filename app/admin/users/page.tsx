@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { db, auth } from "@/lib/firebase"; 
 import { useAuth } from "@/lib/auth-context"; 
-import { sendPasswordResetEmail } from "firebase/auth"; // 💡 引入重設密碼功能
+import { sendPasswordResetEmail, createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { 
   collection, 
   onSnapshot, 
@@ -12,6 +12,7 @@ import {
   query,
   orderBy,
   addDoc,
+  setDoc,
   where,
   deleteDoc,
   serverTimestamp
@@ -27,9 +28,9 @@ interface UserProfile {
   email: string;
   role: Role;
   status: string;
-  phone?: string;    // 💡 新增手機
-  extension?: string; // 💡 新增分機
-  department?: Department; // 💡 新增部門
+  phone?: string;
+  extension?: string;
+  department?: Department;
 }
 
 export default function UserManagementPage() {
@@ -46,7 +47,7 @@ export default function UserManagementPage() {
     phone: "",
     extension: "",
     department: "未分配" as Department,
-    password: "" // 💡 新增密碼欄位
+    password: ""
   });
   
   const currentUserId = profile?.uid || "bfWKqxutqcNp3xEBUCbTNnoB3YQ2"; 
@@ -80,7 +81,7 @@ export default function UserManagementPage() {
         phone: user.phone || "",
         extension: user.extension || "",
         department: user.department || "未分配",
-        password: "" // 編輯模式下密碼欄位不預填
+        password: ""
       });
     } else {
       setEditingUser(null);
@@ -91,7 +92,7 @@ export default function UserManagementPage() {
 
   const handleSaveUser = async () => {
     if (!formData.displayName || !formData.email) return alert("請填寫姓名與 Email");
-    if (!editingUser && !formData.password) return alert("請設定初始密碼"); // 新增帳號時檢查密碼
+    if (!editingUser && !formData.password) return alert("請設定初始密碼");
     
     try {
       if (editingUser) {
@@ -112,7 +113,21 @@ export default function UserManagementPage() {
           timestamp: serverTimestamp()
         });
       } else {
-        await addDoc(collection(db, "users"), {
+        // 💡 建立 Firebase Auth 帳號
+        const userCredential = await createUserWithEmailAndPassword(
+          auth,
+          formData.email,
+          formData.password
+        );
+        const newUid = userCredential.user.uid;
+
+        // 💡 設定 Auth 的 displayName
+        await updateProfile(userCredential.user, {
+          displayName: formData.displayName
+        });
+
+        // 💡 用 Auth UID 當文件 ID 寫入 Firestore
+        await setDoc(doc(db, "users", newUid), {
           displayName: formData.displayName,
           email: formData.email,
           role: formData.role,
@@ -133,10 +148,16 @@ export default function UserManagementPage() {
       }
 
       setShowModal(false);
-      alert(editingUser ? "資料更新成功！" : "帳號建立成功！\n注意：此系統僅建立資料，請務必於 Firebase Auth 手動建立對應帳密或請同仁使用此密碼。");
-    } catch (e) {
+      alert(editingUser ? "資料更新成功！" : "帳號建立成功！");
+    } catch (e: any) {
       console.error(e);
-      alert("操作失敗");
+      if (e.code === "auth/email-already-in-use") {
+        alert("此 Email 已被註冊，請使用其他 Email。");
+      } else if (e.code === "auth/weak-password") {
+        alert("密碼強度不足，請設定至少 6 位數密碼。");
+      } else {
+        alert("操作失敗：" + e.message);
+      }
     }
   };
 
