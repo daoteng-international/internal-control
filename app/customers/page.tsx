@@ -81,7 +81,7 @@ function CustomerFormDrawer({
 }) {
   const [formData, setFormData] = useState<any>({});
   const [activeTab, setActiveTab] = useState<"profile" | "requirements">("profile");
-  const PRODUCT_TAGS = ["辦公室出租", "工商登記", "活動管理"];
+  const PRODUCT_TAGS = ["辦公室出租", "質晑所課程", "活動管理"];
 
   useEffect(() => {
     if (isCreate) {
@@ -271,7 +271,7 @@ function CustomerFormDrawer({
             <button 
               type="button"
               onClick={() => {
-                if (window.confirm("🚨 警告：確定要永久刪除此客戶主檔嗎？\n刪除後，相關看板（辦公室/活動/工商）的資料連結將會失效且無法復原。")) {
+                if (window.confirm("🚨 警告：確定要永久刪除此客戶主檔嗎？\n刪除後，相關看板（辦公室/活動/質晑所課程）的資料連結將會失效且無法復原。")) {
                   (onClose as any)('DELETE', item?.id); 
                 }
               }}
@@ -298,7 +298,7 @@ export default function CustomerManagementPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
-  const PRODUCT_TAGS = ["辦公室出租", "工商登記", "活動管理"];
+  const PRODUCT_TAGS = ["辦公室出租", "質晑所課程", "活動管理"];
 
   useEffect(() => { 
     setHasMounted(true); 
@@ -311,7 +311,7 @@ export default function CustomerManagementPage() {
             ...(Array.isArray(data.productLines) ? data.productLines : [])
         ];
         const isOurSystem = combinedTags.some(t => 
-            ["辦公室出租", "辦公室管理", "辦公室案件", "工商登記", "活動管理"].includes(t)
+            ["辦公室出租", "辦公室管理", "辦公室案件", "質晑所課程", "活動管理"].includes(t)
         );
         if (!isOurSystem) return null;
         return {
@@ -411,7 +411,7 @@ export default function CustomerManagementPage() {
         return isActive 
           ? "bg-purple-600 text-white border-purple-600 shadow-purple-100" 
           : "bg-purple-50 text-purple-600 border-purple-100 hover:bg-purple-100";
-      case "工商登記":
+      case "質晑所課程":
         return isActive 
           ? "bg-amber-500 text-white border-amber-500 shadow-amber-100" 
           : "bg-amber-50 text-amber-600 border-amber-100 hover:bg-amber-100";

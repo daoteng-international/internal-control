@@ -202,7 +202,7 @@ function CardBase({ item, isOverlay = false }: { item: RegCard; isOverlay?: bool
       </div>
 
       <div className="flex flex-wrap gap-1.5 mb-3">
-        <div className="bg-orange-500 text-white text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-tighter">工商登記</div>
+        <div className="bg-orange-500 text-white text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-tighter">質晑所課程</div>
         <div className={`text-[9px] font-bold px-2 py-0.5 rounded ${tagStyles[item.customerTag]}`}>{item.customerTag}</div>
       </div>
 
@@ -259,13 +259,13 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
   useEffect(() => {
     const defaultTodos: TodoItem[] = FIXED_REG_TODO.map((text, index) => ({ id: `reg-${index}`, text, completed: false }));
     if (isCreate) {
-      setFormData({ id: "NEW", stage: "S1", customerTag: "一般客戶", stageStartedAt: new Date().toISOString().split("T")[0], createdAt: new Date().toISOString().split("T")[0], billingCycle: "月繳", contractMonths: 1, taxType: "應稅(5%)", productLines: ["工商登記"], accountant: "", attachments: [], todos: defaultTodos, stageHistory: { "S1": new Date().toISOString().split("T")[0] } });
+      setFormData({ id: "NEW", stage: "S1", customerTag: "一般客戶", stageStartedAt: new Date().toISOString().split("T")[0], createdAt: new Date().toISOString().split("T")[0], billingCycle: "月繳", contractMonths: 1, taxType: "應稅(5%)", productLines: ["質晑所課程"], accountant: "", attachments: [], todos: defaultTodos, stageHistory: { "S1": new Date().toISOString().split("T")[0] } });
       setActiveTab("info");
     } else if (item) {
       setFormData({ ...item, todos: item.todos && item.todos.length > 0 ? item.todos : defaultTodos });
       const qLogs = query(collection(db, "members", item.id, "logs"), orderBy("timestamp", "desc"));
       const unsubLogs = onSnapshot(qLogs, (snapshot) => setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ActivityLog[]));
-      const qTemplates = query(collection(db, "copyTemplates"), where("category", "==", "工商登記"), orderBy("order", "asc"));
+      const qTemplates = query(collection(db, "copyTemplates"), where("category", "==", "質晑所課程"), orderBy("order", "asc"));
       const unsubTemplates = onSnapshot(qTemplates, (snapshot) => { setTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any); });
       return () => { unsubLogs(); unsubTemplates(); };
     }
@@ -540,7 +540,7 @@ export default function RegistrationsPage() {
   useEffect(() => {
       setHasMounted(true);
       onAuthStateChanged(auth, (user) => { if (user) setCurrentUser(user.email || "User"); });
-      const q = query(collection(db, "members"), where("productLines", "array-contains", "工商登記"));
+      const q = query(collection(db, "members"), where("productLines", "array-contains", "質晑所課程"));
       
       const unsubscribe = onSnapshot(q, (snapshot) => { 
         const newCards = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as RegCard[];
@@ -597,7 +597,7 @@ export default function RegistrationsPage() {
     };
     if (isCreating || id === "NEW") {
       const ref = await addDoc(collection(db, "members"), { ...payload, createdAt: new Date().toISOString(), stageStartedAt: new Date().toISOString(), stageHistory: { "S1": new Date().toISOString() } });
-      await addDoc(collection(db, "members", ref.id, "logs"), { action: "建立了新工商案件", user: currentUser, timestamp: serverTimestamp() });
+      await addDoc(collection(db, "members", ref.id, "logs"), { action: "建立了新質晑所課程案件", user: currentUser, timestamp: serverTimestamp() });
     } else await updateDoc(doc(db, "members", id), payload);
     setIsCreating(false); setSelectedId(null);
   };
@@ -627,7 +627,7 @@ export default function RegistrationsPage() {
     <div className="fixed inset-0 left-[260px] flex flex-col bg-slate-50/50 overflow-hidden text-slate-800">
       <header className="p-8 pb-4 shrink-0 bg-white border-b shadow-sm z-10 text-slate-800">
         <div className="flex justify-between items-center mb-6 text-slate-800">
-          <h1 className="text-2xl font-bold underline decoration-blue-500/30 text-slate-800">工商登記管理看板</h1>
+          <h1 className="text-2xl font-bold underline decoration-blue-500/30 text-slate-800">質晑所課程管理看板</h1>
           <button onClick={() => setIsCreating(true)} className="bg-slate-900 text-white px-5 py-2 rounded-lg font-bold shadow-md hover:bg-black transition-all text-xs">+ 新增案件</button>
         </div>
         <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-800">

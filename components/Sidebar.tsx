@@ -16,7 +16,7 @@ export default function Sidebar() {
     { name: "Dashboard", href: "/" },
     { name: "系統公告", href: "/announcements" },
     { name: "辦公室出租管理", href: "/cases" },
-    { name: "質晑所", href: "/registrations" },
+    { name: "質晑所課程", href: "/registrations" },
     { name: "活動管理", href: "/events" },
     { name: "客戶資料管理", href: "/customers" },
     { name: "教育文件管理", href: "/documents" },

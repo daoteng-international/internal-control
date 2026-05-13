@@ -80,7 +80,7 @@ function DetailList({ title, list, themeColor }: { title: string; list: any[]; t
                   className="hover:bg-slate-50/50 transition-colors cursor-pointer"
                   onClick={() => {
                     const path = item.source === '辦公室' ? '/cases' : 
-                                 item.source === '工商' ? '/registrations' : '/events';
+                                 item.source === '質晑所課程' ? '/registrations' : '/events';
                     window.location.href = `${path}?id=${item.id}`;
                   }}
                 >
@@ -184,7 +184,7 @@ export default function ProfessionalDashboard() {
       ...cases.map(c => ({ ...c, source: '辦公室' })), 
       ...members.map(m => ({ 
         ...m, 
-        source: m.productLines?.includes('工商登記') ? '工商' : '活動' 
+        source: m.productLines?.includes('質晑所課程') ? '質晑所課程' : '活動' 
       }))
     ].map(item => ({
       ...item,
@@ -255,7 +255,7 @@ export default function ProfessionalDashboard() {
       },
       overdueList: fullOverdue, revenueList: finishedByTime, activeList: activeByTime,
       officeStats: bldStats,
-      regStats: getProductStats('工商'),
+      regStats: getProductStats('質晑所課程'),
       eventStats: getProductStats('活動'),
       conversionRate: currentRate
     };
@@ -305,7 +305,7 @@ export default function ProfessionalDashboard() {
             </div>
           </DataSection>
 
-          <DataSection title="工商登記績效指標" tag="REGISTRATION" themeColor="emerald">
+          <DataSection title="質晑所課程績效指標" tag="REGISTRATION" themeColor="emerald">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
               <div className="space-y-8">
                 <MetricProgress label={`${timeFilter}成交業績`} value={formatCurrency(regStats.rev)} percentage={analytics.totalRevenue > 0 ? (regStats.rev/analytics.totalRevenue)*100 : 0} colorClass="bg-emerald-600" />
