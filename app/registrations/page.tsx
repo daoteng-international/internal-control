@@ -33,7 +33,7 @@ import {
 } from "firebase/firestore";
 
 // --- 類型與常數定義 ---
-type RegStageId = "S1" | "S2" | "S3" | "S4" | "S5" | "S6" | "S7";
+type RegStageId = "S1" | "S2" | "S3" | "S4" | "S5" | "S6" | "S7"| "S8"| "S9";
 type CustomerTag = "一般客戶" | "MVP客戶" | "VIP客戶";
 type TaxType = "應稅(5%)" | "免稅/未稅";
 
@@ -99,23 +99,27 @@ interface RegCard {
 }
 
 const STAGES: { id: RegStageId; title: string; hint: string }[] = [
-  { id: "S1", title: "S1 待處理", hint: "需求意向確認" },
-  { id: "S2", title: "S2 需求訪談", hint: "產品組合建議" },
-  { id: "S3", title: "S3 口頭報價", hint: "價格條件提供" },
-  { id: "S4", title: "S4 追蹤關懷", hint: "客戶意願追蹤" },
-  { id: "S5", title: "S5 簽約中", hint: "合約流程執行" },
-  { id: "S6", title: "S6 成交", hint: "正式結案簽署" },
-  { id: "S7", title: "S7 暫停", hint: "暫時停止跟進" },
+  { id: "S1", title: "S1 需求確認", hint: "需求意向確認" },
+  { id: "S2", title: "S2 提供方案與報價", hint: "產品組合建議" },
+  { id: "S3", title: "S3 內容討論與議價", hint: "價格條件提供" },
+  { id: "S4", title: "S4 內容/報價更新提交待確認", hint: "客戶意願追蹤" },
+  { id: "S5", title: "S5 待回簽/付訂處理流程中", hint: "合約流程執行" },
+  { id: "S6", title: "S6 完成付訂", hint: "正式結案簽署" },
+  { id: "S7", title: "S7 執行", hint: "暫時停止跟進" },
+  { id: "S8", title: "S8 標記暫停原因/後續跟進計畫", hint: "結案資料保存" },
+  { id: "S9", title: "S9 結案", hint: "完成所有流程" }
 ];
 
 const FIXED_REG_TODO = [
-  "S1: 客戶資料初步收集 / 諮詢服務紀錄",
-  "S2: 報價方案確認 / 服務項目選定",
-  "S3: 發送正式報價單 / 確認客戶預算",
-  "S4: 關懷聯繫紀錄 / 異議處理排除",
-  "S5: 合約條款核對 / 印鑑資料準備",
-  "S6: 完成合約簽署 / 首筆款項入帳",
-  "S7: 標記暫停原因 / 預約未來聯繫"
+  "S1: 需求確認",
+  "S2: 提供方案與報價",
+  "S3: 內容討論與議價",
+  "S4: 內容/報價更新提交待確認",
+  "S5: 待回簽/付訂處理流程中",
+  "S6: 完成付訂",
+  "S7: 執行",
+  "S8: 標記暫停原因 / 後續跟進計畫",
+  "S9: 結案"
 ];
 
 // --- 輔助函式 ---
@@ -125,7 +129,7 @@ function currency(n: number) {
 
 function getDisplayDays(item: RegCard) {
   const start = new Date(item.stageStartedAt || item.createdAt);
-  const end = (item.stage === "S6" || item.stage === "S7") && item.stageEndedAt 
+  const end = (item.stage === "S8" || item.stage === "S9") && item.stageEndedAt
     ? new Date(item.stageEndedAt)
     : new Date();
   const diffTime = end.getTime() - start.getTime();
@@ -174,8 +178,8 @@ function PauseReasonModal({ isOpen, onConfirm, onCancel }: { isOpen: boolean, on
 // --- 看板卡片元件 ---
 function CardBase({ item, isOverlay = false }: { item: RegCard; isOverlay?: boolean }) {
   const days = getDisplayDays(item);
-  const isFinished = item.stage === "S6";
-  const isPaused = item.stage === "S7";
+  const isFinished = item.stage === "S9";
+  const isPaused = item.stage === "S8";
   
   const tagStyles: Record<CustomerTag, string> = {
     "一般客戶": "bg-white text-slate-400 border border-slate-200",
@@ -338,8 +342,8 @@ if (!item && !isCreate) return null;
       <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300">
         <header className="p-6 border-b flex justify-between items-center bg-white shrink-0 text-slate-800">
           <div className="flex items-center gap-3">
-            <h2 className="text-xl font-bold">{isCreate ? "🆕 新增工商登記" : "📝 編輯案件詳情"}</h2>
-            {formData.stage === "S7" && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">暫停中</span>}
+            <h2 className="text-xl font-bold">{isCreate ? "🆕 新增課程" : "📝 編輯案件詳情"}</h2>
+            {formData.stage === "S8" && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">暫停中</span>}
           </div>
           <button onClick={onClose} className="text-slate-400 text-2xl hover:text-slate-600 transition-colors">✕</button>
         </header>
@@ -358,10 +362,14 @@ if (!item && !isCreate) return null;
         <div className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar text-slate-800">
           {activeTab === "info" && (
             <>
-              {formData.stage === "S7" && (
+              {formData.stage === "S8" && (
                 <section className="bg-red-50 border border-red-100 p-5 rounded-2xl text-slate-800">
                   <RequiredLabel>暫停原因詳述</RequiredLabel>
-                  <input value={formData.pauseReason || ""} onChange={(e) => setFormData({ ...formData, pauseReason: e.target.value })} className="w-full border-b border-red-200 py-2 text-sm outline-none focus:border-red-500 font-bold bg-transparent text-red-700" />
+                  <input
+                    value={formData.pauseReason || ""}
+                    onChange={(e) => setFormData({ ...formData, pauseReason: e.target.value })}
+                    className="w-full border-b border-red-200 py-2 text-sm outline-none focus:border-red-500 font-bold bg-transparent text-red-700"
+                  />
                 </section>
               )}
 
@@ -583,7 +591,7 @@ export default function RegistrationsPage() {
       ...rest, 
       name: data.title, 
       contactPerson: data.customer, 
-      productLines: ["工商登記"], // 💡 確保保留標籤，契約中心才能分類
+      productLines: ["質晑所課程"], // 💡 確保保留標籤，契約中心才能分類
       attachments: data.attachments || [], // 💡 關鍵新增：同步附件陣列
       updatedAt: serverTimestamp() 
     };
@@ -601,7 +609,7 @@ export default function RegistrationsPage() {
     const { cardId, toStage } = pendingPauseAction;
     const card = cards.find(c => c.id === cardId);
     const today = new Date().toISOString().split('T')[0];
-    await updateDoc(doc(db, "members", cardId), { stage: toStage, stageStartedAt: today, stageHistory: { ...card?.stageHistory, [toStage]: today }, pauseReason: reason, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db, "members", cardId), { stage: toStage, stageStartedAt: today, stageEndedAt: today, stageHistory: { ...card?.stageHistory, [toStage]: today }, pauseReason: reason, updatedAt: serverTimestamp() });
     await addDoc(collection(db, "members", cardId, "logs"), { action: `階段移動至暫停，原因：${reason}`, user: currentUser, timestamp: serverTimestamp() });
     setPendingPauseAction(null);
   };
@@ -641,11 +649,24 @@ export default function RegistrationsPage() {
             let toStage = oId as RegStageId; if (!STAGES.some(s => s.id === oId)) toStage = cards.find(c => c.id === oId)?.stage as RegStageId;
             const card = cards.find(c => c.id === aId);
             if (toStage && card?.stage !== toStage) {
-              if (toStage === "S7") setPendingPauseAction({ cardId: aId, toStage });
+              if (toStage === "S8") setPendingPauseAction({ cardId: aId, toStage });
               else {
                 const today = new Date().toISOString().split('T')[0];
-                const data: any = { stage: toStage, stageStartedAt: today, stageHistory: { ...card?.stageHistory, [toStage]: today }, updatedAt: serverTimestamp() };
-                if (card?.stage === "S7") data.pauseReason = "";
+                const data: any = {
+                  stage: toStage,
+                  stageStartedAt: today,
+                  stageHistory: { ...card?.stageHistory, [toStage]: today },
+                  updatedAt: serverTimestamp()
+                };
+
+                if (toStage === "S9") {
+                  data.stageEndedAt = today;
+                }
+
+                if (card?.stage === "S8") {
+                  data.pauseReason = "";
+                }
+
                 await updateDoc(doc(db, "members", aId), data);
                 await addDoc(collection(db, "members", aId, "logs"), { action: `階段變更至 ${toStage}`, user: currentUser, timestamp: serverTimestamp() });
               }
