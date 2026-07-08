@@ -19,6 +19,7 @@ import { createPortal } from "react-dom";
 
 import { db, auth } from "@/lib/firebase"; 
 import { onAuthStateChanged } from "firebase/auth";
+import { useSidebar } from "@/lib/sidebar-context";
 import {
   collection,
   onSnapshot,
@@ -87,6 +88,7 @@ interface EventCard {
   todos?: TodoItem[];
   pauseReason?: string;
   attachments?: { name: string; url: string }[];
+  overdueSigned?: boolean;
 }
 
 const STAGES: { id: EventStageId; title: string; hint: string }[] = [
@@ -121,8 +123,22 @@ function currency(n: number) {
 }
 
 function getDisplayDays(item: EventCard) {
+  const isFinalStage = item.stage === "S8" || item.stage === "S11";
+
+  if (isFinalStage) {
+    // S8/S11：不跟今天比較，凍結顯示「S1~S7 累積的總天數」
+    const startDateStr = item.stageHistory?.["S1"] || item.createdAt;
+    const startTime = new Date(startDateStr).getTime();
+
+    const endDateStr = item.stageHistory?.[item.stage] || item.stageEndedAt;
+    const endTime = endDateStr ? new Date(endDateStr).getTime() : Date.now();
+
+    const diffTime = endTime - startTime;
+    return Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+  }
+
   const start = new Date(item.stageStartedAt || item.createdAt);
-  const end = (item.stage === "S8" || item.stage === "S11") && item.stageEndedAt ? new Date(item.stageEndedAt) : new Date();
+  const end = new Date();
   const diffTime = end.getTime() - start.getTime();
   return Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
 }
@@ -178,9 +194,10 @@ function CardBase({ item, isOverlay = false }: { item: EventCard; isOverlay?: bo
   const days = getDisplayDays(item);
   const isFinished = item.stage === "S8";
   const isPaused = item.stage === "S11";
+  const hideDayBadge = item.stage === "S9" || item.stage === "S10";
   let cardStyle = "bg-purple-50 border-slate-200";
   if (isPaused) cardStyle = "bg-red-50 border-red-200";
-  let badgeStyle = isFinished ? "bg-slate-400" : isPaused ? "bg-red-600" : (days >= 14 ? "bg-red-800" : days >= 7 ? "bg-red-500" : "bg-emerald-500");
+  let badgeStyle = (isFinished || isPaused) ? "bg-slate-400" : (days >= 10 ? "bg-red-500" : days >= 3 ? "bg-amber-400" : "bg-emerald-500");
   
   return (
     <div className={[
@@ -193,7 +210,9 @@ function CardBase({ item, isOverlay = false }: { item: EventCard; isOverlay?: bo
     >
       <div className="flex justify-between items-start mb-2">
         <div className="text-sm font-bold text-slate-800 line-clamp-1 pr-12">{item.title}</div>
-        <div className={`absolute top-3 right-3 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm ${badgeStyle}`}>{isPaused ? "暫停中" : isFinished ? `耗時 ${days}天` : `停留 ${days}天`}</div>
+        {!hideDayBadge && (
+          <div className={`absolute top-3 right-3 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm ${badgeStyle}`}>{(isPaused || isFinished) ? `耗時 ${days}天` : `停留 ${days}天`}</div>
+        )}
       </div>
       <div className="mb-3">
         <div className="bg-purple-600 text-white text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-tighter shadow-sm w-fit">活動管理</div>
@@ -534,14 +553,37 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 text-slate-800 shadow-sm grid grid-cols-2 gap-x-8 gap-y-1.5 font-medium">
                   {STAGES.map(s => {
                     const entryDate = formData.stageHistory?.[s.id];
+                    const isFinalStage = s.id === "S8" || s.id === "S11";
+                    const isReminderStage = s.id === "S9" || s.id === "S10";
                     let duration = "-";
-                    if (entryDate) {
-                      const start = new Date(entryDate);
-                      const nextStage = STAGES[STAGES.findIndex(x => x.id === s.id) + 1];
-                      const end = formData.stageHistory?.[nextStage?.id || ''] 
-                        ? new Date(formData.stageHistory[nextStage.id]) 
-                        : (formData.stageEndedAt && (s.id === "S8" || s.id === "S11") ? new Date(formData.stageEndedAt) : new Date());
-                      duration = `${Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))} 天`;
+
+                    if (entryDate && !isReminderStage) {
+                      if (isFinalStage) {
+                        // S8/S11：只有目前真的還停留在這個最終階段時才顯示凍結天數
+                        if (formData.stage === s.id) {
+                          const startDateStr = formData.stageHistory?.["S1"] || formData.createdAt;
+                          const days = Math.floor((new Date(entryDate).getTime() - new Date(startDateStr).getTime()) / (1000 * 60 * 60 * 24));
+                          duration = `${Math.max(0, days)} 天`;
+                        }
+                      } else {
+                        // S1~S7：算到「時間上最接近的下一筆轉換紀錄」，如果目前還停留在這階段，就算到今天
+                        const entryTime = new Date(entryDate).getTime();
+                        const laterEntries = Object.entries(formData.stageHistory || {})
+                          .filter(([key, val]) => key !== s.id && !!val && new Date(val).getTime() > entryTime)
+                          .map(([, val]) => new Date(val as string).getTime());
+
+                        let endTime: number;
+                        if (laterEntries.length > 0) {
+                          endTime = Math.min(...laterEntries);
+                        } else if (formData.stage === s.id) {
+                          endTime = Date.now();
+                        } else {
+                          endTime = entryTime;
+                        }
+
+                        const days = Math.floor((endTime - entryTime) / (1000 * 60 * 60 * 24));
+                        duration = `${Math.max(0, days)} 天`;
+                      }
                     }
                     return (
                       <div key={s.id} className="flex justify-between items-center border-b border-slate-100 pb-1.5 pt-0.5 last:border-0 last:pb-0 text-slate-900">
@@ -572,6 +614,7 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
 
 // --- 主看板頁面 (搜尋列樣式維持) ---
 export default function EventsManagementPage() {
+  const { width: sidebarWidth } = useSidebar();
   const [hasMounted, setHasMounted] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const [searchInput, setSearchInput] = useState("");
@@ -585,7 +628,6 @@ export default function EventsManagementPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [currentUser, setCurrentUser] = useState<string>("ADMIN");
   const [pendingPauseAction, setPendingPauseAction] = useState<{ cardId: string, toStage: EventStageId } | null>(null);
-  const [signedOffOverdue, setSignedOffOverdue] = useState<string[]>([]);
 
   useEffect(() => {
       setHasMounted(true);
@@ -625,13 +667,19 @@ export default function EventsManagementPage() {
     const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
     const now = new Date().getTime();
     return cards.filter(card => {
-      if (card.stage !== "S7" || signedOffOverdue.includes(card.id)) return false;
+      if (card.stage !== "S7") return false;
+      // 已簽署過的案件，永久不再顯示（不受之後是否重新進入S7影響）
+      if (card.overdueSigned) return false;
       const stageTime = new Date(card.stageStartedAt).getTime();
       return (now - stageTime) > THREE_DAYS_MS;
     });
-  }, [cards, signedOffOverdue]);
+  }, [cards]);
 
-  const handleSignOff = async (cardId: string) => { await addDoc(collection(db, "members", cardId, "logs"), { action: "主管已核閱簽約/訂金逾期風險並簽署", user: currentUser, timestamp: serverTimestamp() }); setSignedOffOverdue(prev => [...prev, cardId]); };
+  const handleSignOff = async (cardId: string) => {
+    await addDoc(collection(db, "members", cardId, "logs"), { action: "主管已核閱簽約/訂金逾期風險並簽署", user: currentUser, timestamp: serverTimestamp() });
+    // 把簽署狀態真正寫回資料庫，重新整理或換裝置都不會消失，也永久不會再跳出來
+    await updateDoc(doc(db, "members", cardId), { overdueSigned: true });
+  };
 
   const handleSave = async (data: EventCard) => {
     if (!data.taxId) {
@@ -673,7 +721,10 @@ export default function EventsManagementPage() {
     if (!pendingPauseAction) return;
     const card = cards.find(c => c.id === pendingPauseAction.cardId);
     const today = new Date().toISOString().split('T')[0];
-    await updateDoc(doc(db, "members", pendingPauseAction.cardId), { stage: pendingPauseAction.toStage, stageStartedAt: today, stageHistory: { ...card?.stageHistory, [pendingPauseAction.toStage]: today }, pauseReason: reason, updatedAt: serverTimestamp() });
+    // 每個階段只記錄「第一次進入」的日期，之後不論再回到這個階段幾次都不覆寫
+    const protectedDate = card?.stageHistory?.[pendingPauseAction.toStage] || today;
+    const historyUpdate = { ...card?.stageHistory, [pendingPauseAction.toStage]: protectedDate };
+    await updateDoc(doc(db, "members", pendingPauseAction.cardId), { stage: pendingPauseAction.toStage, stageStartedAt: protectedDate, stageEndedAt: today, stageHistory: historyUpdate, pauseReason: reason, updatedAt: serverTimestamp() });
     await addDoc(collection(db, "members", pendingPauseAction.cardId, "logs"), { action: `活動移動至暫停，原因：${reason}`, user: currentUser, timestamp: serverTimestamp() });
     setPendingPauseAction(null);
   };
@@ -688,7 +739,7 @@ export default function EventsManagementPage() {
   if (!hasMounted || loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 bg-slate-50 text-slate-800">載入活動中...</div>;
 
   return (
-    <div className="fixed inset-0 left-[260px] flex flex-col bg-slate-50/50 overflow-hidden text-slate-800">
+    <div style={{ left: sidebarWidth, transition: "left 200ms" }} className="fixed inset-0 flex flex-col bg-slate-50/50 overflow-hidden text-slate-800">
       <header className="p-8 shrink-0 bg-white border-b shadow-sm z-10 text-slate-800">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold underline decoration-purple-500/30">活動管理看板</h1>
@@ -715,7 +766,10 @@ export default function EventsManagementPage() {
               if (toStage === "S11") { setPendingPauseAction({ cardId: aId, toStage }); }
               else {
                 const today = new Date().toISOString().split('T')[0];
-                const updateData: any = { stage: toStage, stageStartedAt: today, stageHistory: { ...card?.stageHistory, [toStage]: today }, updatedAt: serverTimestamp() };
+                // 每個階段只記錄「第一次進入」的日期，之後不論再回到這個階段幾次都不覆寫
+                const protectedDate = card?.stageHistory?.[toStage] || today;
+                const historyUpdate = { ...card?.stageHistory, [toStage]: protectedDate };
+                const updateData: any = { stage: toStage, stageStartedAt: protectedDate, stageHistory: historyUpdate, updatedAt: serverTimestamp() };
                 if (card?.stage === "S11") updateData.pauseReason = "";
                 await updateDoc(doc(db, "members", aId), updateData);
                 await addDoc(collection(db, "members", aId, "logs"), { action: `活動階段變更至 ${toStage}`, user: currentUser, timestamp: serverTimestamp() });

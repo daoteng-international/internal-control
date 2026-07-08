@@ -19,6 +19,7 @@ import { createPortal } from "react-dom";
 
 import { db, auth } from "@/lib/firebase"; 
 import { onAuthStateChanged } from "firebase/auth";
+import { useSidebar } from "@/lib/sidebar-context";
 import {
   collection,
   onSnapshot,
@@ -96,6 +97,7 @@ interface RegCard {
   startDate?: string;
   endDate?: string;
   pauseReason?: string;
+  overdueSigned?: boolean;
 }
 
 const STAGES: { id: RegStageId; title: string; hint: string }[] = [
@@ -128,10 +130,22 @@ function currency(n: number) {
 }
 
 function getDisplayDays(item: RegCard) {
+  const isFinalStage = item.stage === "S8" || item.stage === "S9";
+
+  if (isFinalStage) {
+    // S8/S9：不跟今天比較，凍結顯示「S1~S7 累積的總天數」
+    const startDateStr = item.stageHistory?.["S1"] || item.createdAt;
+    const startTime = new Date(startDateStr).getTime();
+
+    const endDateStr = item.stageHistory?.[item.stage] || item.stageEndedAt;
+    const endTime = endDateStr ? new Date(endDateStr).getTime() : Date.now();
+
+    const diffTime = endTime - startTime;
+    return Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+  }
+
   const start = new Date(item.stageStartedAt || item.createdAt);
-  const end = (item.stage === "S8" || item.stage === "S9") && item.stageEndedAt
-    ? new Date(item.stageEndedAt)
-    : new Date();
+  const end = new Date();
   const diffTime = end.getTime() - start.getTime();
   return Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
 }
@@ -187,7 +201,7 @@ function CardBase({ item, isOverlay = false }: { item: RegCard; isOverlay?: bool
     "VIP客戶": "bg-yellow-100 text-yellow-700 border border-yellow-300",
   };
 
-  let badgeStyle = isFinished ? "bg-slate-400" : isPaused ? "bg-red-600" : (days >= 14 ? "bg-red-800" : days >= 7 ? "bg-red-500" : "bg-emerald-500");
+  let badgeStyle = (isFinished || isPaused) ? "bg-slate-400" : (days >= 10 ? "bg-red-500" : days >= 3 ? "bg-amber-400" : "bg-emerald-500");
   
   return (
     <div 
@@ -197,7 +211,7 @@ function CardBase({ item, isOverlay = false }: { item: RegCard; isOverlay?: bool
       <div className="flex justify-between items-start mb-2 text-slate-800">
         <div className="text-sm font-bold line-clamp-1 pr-12">{item.title}</div>
         <div className={`absolute top-3 right-3 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm ${badgeStyle}`}>
-          {isPaused ? "暫停中" : isFinished ? `耗時 ${days}天` : `停留 ${days}天`}
+          {(isPaused || isFinished) ? `耗時 ${days}天` : `停留 ${days}天`}
         </div>
       </div>
 
@@ -494,6 +508,52 @@ if (!item && !isCreate) return null;
           {activeTab === "history" && (
             <div className="space-y-10 text-slate-800">
               <section className="space-y-4">
+                <h3 className="text-sm font-bold border-l-4 border-blue-600 pl-3 uppercase tracking-widest text-slate-800">階段天數分析</h3>
+                <div className="grid grid-cols-2 gap-4 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                  {STAGES.map(s => {
+                    const entryDate = formData.stageHistory?.[s.id];
+                    const isFinalStage = s.id === "S8" || s.id === "S9";
+                    let duration = "-";
+
+                    if (entryDate) {
+                      if (isFinalStage) {
+                        // S8/S9：只有目前真的還停留在這個最終階段時才顯示凍結天數，
+                        // 一旦被移出去（不再是結案/暫停狀態），就不再顯示舊的天數，避免誤解
+                        if (formData.stage === s.id) {
+                          const startDateStr = formData.stageHistory?.["S1"] || formData.createdAt;
+                          const days = Math.floor((new Date(entryDate).getTime() - new Date(startDateStr).getTime()) / (1000 * 60 * 60 * 24));
+                          duration = `${Math.max(0, days)} 天`;
+                        }
+                      } else {
+                        // S1~S7：算到「時間上最接近的下一筆轉換紀錄」，如果目前還停留在這階段，就算到今天
+                        const entryTime = new Date(entryDate).getTime();
+                        const laterEntries = Object.entries(formData.stageHistory || {})
+                          .filter(([key, val]) => key !== s.id && !!val && new Date(val).getTime() > entryTime)
+                          .map(([, val]) => new Date(val as string).getTime());
+
+                        let endTime: number;
+                        if (laterEntries.length > 0) {
+                          endTime = Math.min(...laterEntries);
+                        } else if (formData.stage === s.id) {
+                          endTime = Date.now();
+                        } else {
+                          endTime = entryTime;
+                        }
+
+                        const days = Math.floor((endTime - entryTime) / (1000 * 60 * 60 * 24));
+                        duration = `${Math.max(0, days)} 天`;
+                      }
+                    }
+                    return (
+                      <div key={s.id} className="flex justify-between items-center p-2 border-b border-blue-100 last:border-0">
+                        <span className="text-xs font-bold text-blue-800">{s.title}</span>
+                        <span className="text-sm font-black text-slate-700">{duration}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+              <section className="space-y-4">
                 <h3 className="text-sm font-bold border-l-4 border-blue-600 pl-3 uppercase tracking-widest text-slate-800">詳細歷史紀錄</h3>
                 <div className="relative border-l-2 border-slate-100 ml-2 pl-6 space-y-8 mt-4">
                   {logs.map(log => (
@@ -520,6 +580,7 @@ if (!item && !isCreate) return null;
 }
 // --- 主看板頁面 ---
 export default function RegistrationsPage() {
+  const { width: sidebarWidth } = useSidebar();
   const [hasMounted, setHasMounted] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const [searchInput, setSearchInput] = useState("");
@@ -535,7 +596,6 @@ export default function RegistrationsPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [currentUser, setCurrentUser] = useState<string>("ADMIN");
   const [pendingPauseAction, setPendingPauseAction] = useState<{ cardId: string, toStage: RegStageId } | null>(null);
-  const [signedOffOverdue, setSignedOffOverdue] = useState<string[]>([]);
 
   useEffect(() => {
       setHasMounted(true);
@@ -576,10 +636,14 @@ export default function RegistrationsPage() {
 
   const overdueAlerts = useMemo(() => {
     const now = new Date().getTime();
-    return cards.filter(card => card.stage === "S5" && !signedOffOverdue.includes(card.id) && (now - new Date(card.stageStartedAt).getTime()) > 3 * 24 * 60 * 60 * 1000);
-  }, [cards, signedOffOverdue]);
+    return cards.filter(card => card.stage === "S5" && !card.overdueSigned && (now - new Date(card.stageStartedAt).getTime()) > 3 * 24 * 60 * 60 * 1000);
+  }, [cards]);
 
-  const handleSignOff = async (cardId: string) => { await addDoc(collection(db, "members", cardId, "logs"), { action: "主管已核閱逾期風險並簽署", user: currentUser, timestamp: serverTimestamp() }); setSignedOffOverdue(p => [...p, cardId]); };
+  const handleSignOff = async (cardId: string) => {
+    await addDoc(collection(db, "members", cardId, "logs"), { action: "主管已核閱逾期風險並簽署", user: currentUser, timestamp: serverTimestamp() });
+    // 把簽署狀態真正寫回資料庫，重新整理或換裝置都不會消失，也永久不會再跳出來
+    await updateDoc(doc(db, "members", cardId), { overdueSigned: true });
+  };
 
   const handleSave = async (data: RegCard) => {
     if (!data.taxId) {
@@ -609,7 +673,10 @@ export default function RegistrationsPage() {
     const { cardId, toStage } = pendingPauseAction;
     const card = cards.find(c => c.id === cardId);
     const today = new Date().toISOString().split('T')[0];
-    await updateDoc(doc(db, "members", cardId), { stage: toStage, stageStartedAt: today, stageEndedAt: today, stageHistory: { ...card?.stageHistory, [toStage]: today }, pauseReason: reason, updatedAt: serverTimestamp() });
+    // 每個階段只記錄「第一次進入」的日期，之後不論再回到這個階段幾次都不覆寫
+    const protectedDate = card?.stageHistory?.[toStage] || today;
+    const historyUpdate = { ...card?.stageHistory, [toStage]: protectedDate };
+    await updateDoc(doc(db, "members", cardId), { stage: toStage, stageStartedAt: protectedDate, stageEndedAt: today, stageHistory: historyUpdate, pauseReason: reason, updatedAt: serverTimestamp() });
     await addDoc(collection(db, "members", cardId, "logs"), { action: `階段移動至暫停，原因：${reason}`, user: currentUser, timestamp: serverTimestamp() });
     setPendingPauseAction(null);
   };
@@ -624,7 +691,7 @@ export default function RegistrationsPage() {
   if (!hasMounted || loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 bg-slate-50 text-slate-800">載入中...</div>;
 
   return (
-    <div className="fixed inset-0 left-[260px] flex flex-col bg-slate-50/50 overflow-hidden text-slate-800">
+    <div style={{ left: sidebarWidth, transition: "left 200ms" }} className="fixed inset-0 flex flex-col bg-slate-50/50 overflow-hidden text-slate-800">
       <header className="p-8 pb-4 shrink-0 bg-white border-b shadow-sm z-10 text-slate-800">
         <div className="flex justify-between items-center mb-6 text-slate-800">
           <h1 className="text-2xl font-bold underline decoration-blue-500/30 text-slate-800">質晑所課程管理看板</h1>
@@ -652,10 +719,13 @@ export default function RegistrationsPage() {
               if (toStage === "S8") setPendingPauseAction({ cardId: aId, toStage });
               else {
                 const today = new Date().toISOString().split('T')[0];
+                // 每個階段只記錄「第一次進入」的日期，之後不論再回到這個階段幾次都不覆寫
+                const protectedDate = card?.stageHistory?.[toStage] || today;
+                const historyUpdate = { ...card?.stageHistory, [toStage]: protectedDate };
                 const data: any = {
                   stage: toStage,
-                  stageStartedAt: today,
-                  stageHistory: { ...card?.stageHistory, [toStage]: today },
+                  stageStartedAt: protectedDate,
+                  stageHistory: historyUpdate,
                   updatedAt: serverTimestamp()
                 };
 

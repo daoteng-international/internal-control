@@ -21,6 +21,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { db, auth} from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
+import { useSidebar } from "@/lib/sidebar-context";
 import { 
   collection, 
   onSnapshot, 
@@ -128,10 +129,22 @@ function currency(n: number) {
 }
 
 function getDisplayDays(item: LeaseCard) {
+  const isFinalStage = item.stage === "S7" || item.stage === "S8";
+
+  if (isFinalStage) {
+    // S7/S8：天數要凍結成「從S1進入到移入S7/S8」的總天數
+    const startDateStr = item.stageHistory?.["S1"] || item.createdAt;
+    const startTime = new Date(startDateStr).getTime();
+
+    const endDateStr = item.stageHistory?.[item.stage] || item.stageEndedAt;
+    const endTime = endDateStr ? new Date(endDateStr).getTime() : Date.now();
+
+    const diffTime = endTime - startTime;
+    return Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+  }
+
   const start = new Date(item.stageStartedAt);
-  const end = (item.stage === "S7" || item.stage === "S8") && item.stageEndedAt 
-    ? new Date(item.stageEndedAt) 
-    : new Date();
+  const end = new Date();
   const diffTime = end.getTime() - start.getTime();
   return Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
 }
@@ -157,7 +170,7 @@ function CardBase({ item, isOverlay = false }: { item: LeaseCard; isOverlay?: bo
   const isFinalStage = item.stage === "S7" || item.stage === "S8";
   const badgeStyle = isFinalStage 
     ? "bg-slate-400 text-white" 
-    : (days >= 7 ? "bg-red-500 text-white" : days >= 3 ? "bg-amber-400 text-white" : "bg-emerald-500 text-white");
+    : (days >= 10 ? "bg-red-500 text-white" : days >= 3 ? "bg-amber-400 text-white" : "bg-emerald-500 text-white");
 
   return (
     <div 
@@ -541,7 +554,38 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
                 <div className="grid grid-cols-2 gap-4 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
                   {STAGES.map(s => {
                     const entryDate = formData.stageHistory?.[s.id];
-                    let duration = entryDate ? `${Math.floor((new Date().getTime() - new Date(entryDate).getTime()) / (1000 * 60 * 60 * 24))} 天` : "-";
+                    const isFinalStage = s.id === "S7" || s.id === "S8";
+                    let duration = "-";
+
+                    if (entryDate) {
+                      if (isFinalStage) {
+                        // S7/S8：只有目前真的還停留在這個最終階段時才顯示凍結天數，
+                        // 一旦被移出去（不再是成交/暫停狀態），就不再顯示舊的天數，避免誤解
+                        if (formData.stage === s.id) {
+                          const startDateStr = formData.stageHistory?.["S1"] || formData.createdAt;
+                          const days = Math.floor((new Date(entryDate).getTime() - new Date(startDateStr).getTime()) / (1000 * 60 * 60 * 24));
+                          duration = `${Math.max(0, days)} 天`;
+                        }
+                      } else {
+                        // S1~S6：算到「時間上最接近的下一筆轉換紀錄」，如果目前還停留在這階段，就算到今天
+                        const entryTime = new Date(entryDate).getTime();
+                        const laterEntries = Object.entries(formData.stageHistory || {})
+                          .filter(([key, val]) => key !== s.id && !!val && new Date(val).getTime() > entryTime)
+                          .map(([, val]) => new Date(val as string).getTime());
+
+                        let endTime: number;
+                        if (laterEntries.length > 0) {
+                          endTime = Math.min(...laterEntries);
+                        } else if (formData.stage === s.id) {
+                          endTime = Date.now();
+                        } else {
+                          endTime = entryTime;
+                        }
+
+                        const days = Math.floor((endTime - entryTime) / (1000 * 60 * 60 * 24));
+                        duration = `${Math.max(0, days)} 天`;
+                      }
+                    }
                     return (
                       <div key={s.id} className="flex justify-between items-center p-2 border-b border-blue-100 last:border-0">
                         <span className="text-xs font-bold text-blue-800">{s.title}</span>
@@ -580,6 +624,7 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
 
 export default function CasesPage() {
   const router = useRouter();
+  const { width: sidebarWidth } = useSidebar();
   const [hasMounted, setHasMounted] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const [searchInput, setSearchInput] = useState("");
@@ -743,7 +788,7 @@ export default function CasesPage() {
   if (!hasMounted || loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 text-slate-800">正在與雲端資料庫同步...</div>;
 
   return (
-    <div className="fixed inset-0 left-[260px] flex flex-col bg-slate-50/50 font-sans overflow-hidden text-slate-800 text-slate-800">
+    <div style={{ left: sidebarWidth, transition: "left 200ms" }} className="fixed inset-0 flex flex-col bg-slate-50/50 font-sans overflow-hidden text-slate-800 text-slate-800">
   <header className="p-8 shrink-0 bg-white border-b shadow-sm z-10 text-slate-800">
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-2xl font-bold underline decoration-blue-500/30">辦公室出租管理</h1>
@@ -808,8 +853,12 @@ export default function CasesPage() {
               const card = cards.find(c => c.id === aId);
               if (toStage && card?.stage !== toStage) {
                 const today = new Date().toISOString().split('T')[0];
-                const historyUpdate = { ...card?.stageHistory, [toStage]: today };
-                const updatePayload: any = { stage: toStage, stageStartedAt: today, stageHistory: historyUpdate, updatedAt: serverTimestamp() };
+                // 每個階段的日期只記錄「第一次進入」的時間，之後不管再回到這個階段幾次都不覆寫，
+                // 避免不小心拖錯又拖回去時，把原本真實的進入日期洗掉
+                const historyUpdate = { ...card?.stageHistory, [toStage]: card?.stageHistory?.[toStage] || today };
+                // stageStartedAt 直接沿用同一個被保護的日期，卡片上的「停留天數」才不會被誤觸的移動重置
+                const protectedStageStart = historyUpdate[toStage];
+                const updatePayload: any = { stage: toStage, stageStartedAt: protectedStageStart, stageHistory: historyUpdate, updatedAt: serverTimestamp() };
                 if (toStage === "S7" || toStage === "S8") updatePayload.stageEndedAt = today;
                 else updatePayload.stageEndedAt = null;
 

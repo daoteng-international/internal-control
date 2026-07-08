@@ -3,6 +3,7 @@
 import "./globals.css";
 import Sidebar from "../components/Sidebar";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { SidebarProvider } from "@/lib/sidebar-context";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 
@@ -40,9 +41,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="zh-Hant">
       <body className="bg-slate-50 text-slate-900">
         <AuthProvider>
-          <AuthGuard>
-            {children}
-          </AuthGuard>
+          <SidebarProvider>
+            <AuthGuard>
+              {children}
+            </AuthGuard>
+          </SidebarProvider>
         </AuthProvider>
       </body>
     </html>
