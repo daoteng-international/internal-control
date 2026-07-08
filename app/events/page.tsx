@@ -561,7 +561,7 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
                       if (isFinalStage) {
                         // S8/S11：只有目前真的還停留在這個最終階段時才顯示凍結天數
                         if (formData.stage === s.id) {
-                          const startDateStr = formData.stageHistory?.["S1"] || formData.createdAt;
+                          const startDateStr = formData.stageHistory?.["S1"] || formData.createdAt || new Date().toISOString();
                           const days = Math.floor((new Date(entryDate).getTime() - new Date(startDateStr).getTime()) / (1000 * 60 * 60 * 24));
                           duration = `${Math.max(0, days)} 天`;
                         }

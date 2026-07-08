@@ -381,7 +381,7 @@ function DetailDrawer({
                     if (entryDate) {
                       if (isFinalStage) {
                         if (formData.stage === s.id) {
-                          const startDateStr = formData.stageHistory?.["S1"] || formData.createdAt;
+                          const startDateStr = formData.stageHistory?.["S1"] || formData.createdAt || new Date().toISOString();
                           const days = Math.floor((new Date(entryDate).getTime() - new Date(startDateStr as string).getTime()) / (1000 * 60 * 60 * 24));
                           duration = `${Math.max(0, days)} 天`;
                         }

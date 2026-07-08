@@ -520,7 +520,7 @@ if (!item && !isCreate) return null;
                         // S8/S9：只有目前真的還停留在這個最終階段時才顯示凍結天數，
                         // 一旦被移出去（不再是結案/暫停狀態），就不再顯示舊的天數，避免誤解
                         if (formData.stage === s.id) {
-                          const startDateStr = formData.stageHistory?.["S1"] || formData.createdAt;
+                          const startDateStr = formData.stageHistory?.["S1"] || formData.createdAt || new Date().toISOString();
                           const days = Math.floor((new Date(entryDate).getTime() - new Date(startDateStr).getTime()) / (1000 * 60 * 60 * 24));
                           duration = `${Math.max(0, days)} 天`;
                         }
