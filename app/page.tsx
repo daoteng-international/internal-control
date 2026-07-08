@@ -329,7 +329,7 @@ function HorizontalBarChart({ data, color, unit = "", tickStep = 5 }: { data: { 
           label={{ value: unit ? `數值（${unit.trim()}）` : "數值", position: "insideBottom", offset: -16, fontSize: 12, fill: "#64748b", fontWeight: 700 }}
         />
         <YAxis type="category" dataKey="label" width={180} tick={{ fontSize: 11, fill: "#475569" }} axisLine={false} tickLine={false} />
-        <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} formatter={(v: number) => [`${v}${unit}`, ""]} />
+        <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} formatter={(v: any) => [`${v}${unit}`, ""]} />
         <Bar dataKey="value" fill={color} radius={[0, 6, 6, 0]} barSize={18} />
       </BarChart>
     </ResponsiveContainer>
