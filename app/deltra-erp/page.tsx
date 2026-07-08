@@ -534,7 +534,7 @@ export default function DeltraErpPage() {
             onChange={(e) => setSearchInput(e.target.value)}
             className="px-2 py-1.5 border border-slate-200 rounded-lg text-xs w-48 outline-none focus:border-indigo-400 bg-white"
           />
-          <button onClick={() => setSearchInput("") || setAppliedSearch("")} className="px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-600">清除</button>
+          <button onClick={() => { setSearchInput(""); setAppliedSearch(""); }} className="px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-600">清除</button>
           <button onClick={() => setAppliedSearch(searchInput)} className="px-4 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm">執行</button>
         </div>
       </header>
