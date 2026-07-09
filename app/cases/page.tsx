@@ -90,6 +90,7 @@ interface LeaseCard {
   actualRentInclTax: number;
   contractMonths: number;
   totalContractAmount: number;
+  preDealEstimatedAmount?: number;
   stage: StageId;
   updatedAt: any;
   stageStartedAt: string; 
@@ -253,7 +254,7 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
     if (isCreate) {
       setFormData({
         id: `L-${Date.now()}`, stage: "S1", building: "四維館", stageStartedAt: new Date().toISOString().split('T')[0], createdAt: new Date().toISOString(), updatedAt: "",
-        monthlyRent: 0, actualRentExclTax: 0, actualRentInclTax: 0, contractMonths: 0, totalContractAmount: 0, 
+        monthlyRent: 0, actualRentExclTax: 0, actualRentInclTax: 0, contractMonths: 0, totalContractAmount: 0, preDealEstimatedAmount: 0,
         roomNo: "", mailNo: "", owner: "未定", todos: defaultTodos, stageHistory: { "S1": new Date().toISOString().split('T')[0] },
         taxType: "應稅(5%)", tags: ["辦公室管理"], companyName: "", contactPerson: "", customer: "", phone: "", taxId: "", email: "", paymentCycle: "月繳", note: "", salesNote: "", bestContactTime: "", attachments: []
       });
@@ -471,6 +472,18 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
                                         )}
                                       </div> {/* 關閉 space-y-3 */}
                                     </div>   {/* 關閉 col-span-2 border-t */}
+
+                                    {/* 💡 新增：成交前預估金額 */}
+                                    <div className="col-span-2">
+                                      <label className="text-xs font-bold text-slate-500 block mb-1">成交前預估金額</label>
+                                      <input
+                                        type="number"
+                                        value={formData.preDealEstimatedAmount === 0 ? "" : formData.preDealEstimatedAmount || ""}
+                                        onChange={e => setFormData({...formData, preDealEstimatedAmount: Number(e.target.value)})}
+                                        className="w-full border-b py-2 text-sm outline-none focus:border-blue-600 text-slate-800"
+                                        placeholder="尚未成交前的預估金額"
+                                      />
+                                    </div>
                                   </div>     {/* 關閉 grid-cols-2 */}
                                 </section>   {/* 💡 關閉基本資訊 section */}
 

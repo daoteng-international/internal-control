@@ -89,6 +89,7 @@ interface EventCard {
   pauseReason?: string;
   attachments?: { name: string; url: string }[];
   overdueSigned?: boolean;
+  preDealEstimatedAmount?: number;
 }
 
 const STAGES: { id: EventStageId; title: string; hint: string }[] = [
@@ -276,7 +277,7 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
       setFormData({ 
         id: "NEW", stage: "S1", customerTag: "一般客戶", 
         createdAt: new Date().toISOString().split("T")[0],
-        taxType: "應稅(5%)", totalContractAmount: 0, 
+        taxType: "應稅(5%)", totalContractAmount: 0, preDealEstimatedAmount: 0,
         todos: defaultTodos, 
         attachments: []
       });
@@ -477,6 +478,19 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
                       目前尚無附件上傳
                     </div>
                   )}
+                </div>
+              </section>
+
+              <section className="space-y-4 text-slate-800">
+                <h3 className="text-sm font-bold border-l-4 border-slate-400 pl-3 uppercase tracking-widest text-slate-800">成交前預估金額</h3>
+                <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-6">
+                  <input
+                    type="number"
+                    value={formData.preDealEstimatedAmount === 0 ? "" : formData.preDealEstimatedAmount || ""}
+                    onChange={(e) => setFormData({ ...formData, preDealEstimatedAmount: Number(e.target.value) })}
+                    className="w-full border-b border-slate-200 py-2 text-lg font-bold outline-none bg-transparent focus:border-purple-500 text-slate-700"
+                    placeholder="尚未成交前的預估金額"
+                  />
                 </div>
               </section>
 

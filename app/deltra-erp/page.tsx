@@ -91,6 +91,7 @@ interface DeltraCard {
   createdAt: string;
   pauseReason?: string;
   todos?: TodoItem[];
+  preDealEstimatedAmount?: number;
 }
 
 function currency(n: number) {
@@ -247,6 +248,7 @@ function DetailDrawer({
         createdAt: new Date().toISOString(),
         stageHistory: { S1: new Date().toISOString().split("T")[0] },
         amount: 0,
+        preDealEstimatedAmount: 0,
         companyName: "",
         contactPerson: "",
         phone: "",
@@ -328,6 +330,19 @@ function DetailDrawer({
                   <div className="w-full border-b py-2 text-sm bg-slate-100 text-slate-400 cursor-not-allowed font-mono px-1">
                     {formData.createdAt ? new Date(formData.createdAt).toLocaleString("zh-TW", { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "-"}
                   </div>
+                </div>
+              </section>
+
+              <section className="space-y-4 text-slate-800">
+                <h3 className="text-sm font-bold border-l-4 border-slate-400 pl-3 uppercase tracking-widest">成交前預估金額</h3>
+                <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-6">
+                  <input
+                    type="number"
+                    value={formData.preDealEstimatedAmount === 0 ? "" : formData.preDealEstimatedAmount || ""}
+                    onChange={(e) => setFormData({ ...formData, preDealEstimatedAmount: Number(e.target.value) })}
+                    placeholder="尚未成交前的預估金額"
+                    className="w-full border-b border-slate-200 py-2 text-lg font-bold outline-none bg-transparent focus:border-slate-500 text-slate-700"
+                  />
                 </div>
               </section>
 

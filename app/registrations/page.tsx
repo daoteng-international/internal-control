@@ -98,6 +98,7 @@ interface RegCard {
   endDate?: string;
   pauseReason?: string;
   overdueSigned?: boolean;
+  preDealEstimatedAmount?: number;
 }
 
 const STAGES: { id: RegStageId; title: string; hint: string }[] = [
@@ -273,7 +274,7 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
   useEffect(() => {
     const defaultTodos: TodoItem[] = FIXED_REG_TODO.map((text, index) => ({ id: `reg-${index}`, text, completed: false }));
     if (isCreate) {
-      setFormData({ id: "NEW", stage: "S1", customerTag: "一般客戶", stageStartedAt: new Date().toISOString().split("T")[0], createdAt: new Date().toISOString().split("T")[0], billingCycle: "月繳", contractMonths: 1, taxType: "應稅(5%)", productLines: ["質晑所課程"], accountant: "", attachments: [], todos: defaultTodos, stageHistory: { "S1": new Date().toISOString().split("T")[0] } });
+      setFormData({ id: "NEW", stage: "S1", customerTag: "一般客戶", stageStartedAt: new Date().toISOString().split("T")[0], createdAt: new Date().toISOString().split("T")[0], billingCycle: "月繳", contractMonths: 1, taxType: "應稅(5%)", productLines: ["質晑所課程"], accountant: "", attachments: [], todos: defaultTodos, stageHistory: { "S1": new Date().toISOString().split("T")[0] }, preDealEstimatedAmount: 0 });
       setActiveTab("info");
     } else if (item) {
       setFormData({ ...item, todos: item.todos && item.todos.length > 0 ? item.todos : defaultTodos });
@@ -437,6 +438,18 @@ if (!item && !isCreate) return null;
                       </div>
                     )}
                   </div>
+                </div>
+
+                {/* 💡 新增：成交前預估金額 */}
+                <div className="col-span-2 mt-6">
+                  <label className="text-xs font-bold text-slate-500 block mb-1">成交前預估金額</label>
+                  <input
+                    type="number"
+                    value={formData.preDealEstimatedAmount === 0 ? "" : formData.preDealEstimatedAmount || ""}
+                    onChange={(e) => setFormData({ ...formData, preDealEstimatedAmount: Number(e.target.value) })}
+                    className="w-full border-b py-2 text-sm outline-none focus:border-emerald-600 bg-transparent text-slate-800"
+                    placeholder="尚未成交前的預估金額"
+                  />
                 </div>
               </section>
 
