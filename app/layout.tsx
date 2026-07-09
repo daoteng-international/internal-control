@@ -2,6 +2,7 @@
 
 import "./globals.css";
 import Sidebar from "../components/Sidebar";
+import AIChatWidget from "../components/AIChatWidget";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { SidebarProvider } from "@/lib/sidebar-context";
 import { usePathname, useRouter } from "next/navigation";
@@ -18,7 +19,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (!loading && !user && !isLoginPage) {
       router.replace("/login"); // 💡 確認未登入才跳轉
     }
-  }, [loading, user, isLoginPage]);
+  }, [loading, user, isLoginPage, router]);
 
   // 💡 還在確認登入狀態時，什麼都不顯示
   if (loading) return null;
@@ -32,6 +33,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       <main className="flex-1 overflow-hidden relative">
         {children}
       </main>
+      {!isLoginPage && <AIChatWidget />}
     </div>
   );
 }
