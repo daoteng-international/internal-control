@@ -44,6 +44,15 @@ function Icon({ name, className = "w-5 h-5" }: { name: string; className?: strin
           <path d="M15 21v-6h5v6" />
         </svg>
       );
+    case "proposal":
+      return (
+        <svg {...common}>
+          <path d="M6 3.5h12a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z" />
+          <path d="M9 8h6" />
+          <path d="M9 12h2.5M14 12h1.5" />
+          <path d="M9 16h2.5M14 16h1.5" />
+        </svg>
+      );
     case "book":
       return (
         <svg {...common}>
@@ -92,6 +101,15 @@ function Icon({ name, className = "w-5 h-5" }: { name: string; className?: strin
           <path d="M4.5 11.5v6c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-6" />
         </svg>
       );
+    case "floorplan":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="4" width="17" height="16" rx="1.5" />
+          <path d="M10.5 4v16" />
+          <path d="M3.5 12h7" />
+          <path d="M10.5 9h10" />
+        </svg>
+      );
     case "user-cog":
       return (
         <svg {...common}>
@@ -130,8 +148,10 @@ export default function Sidebar() {
   // 1. 定義原始選單項目
   const menuItems = [
     { name: "Dashboard", href: "/", icon: "dashboard" },
+    { name: "每週營運報表", href: "/reports/weekly", icon: "document" },
     { name: "系統公告", href: "/announcements", icon: "announcement" },
     { name: "辦公室出租管理", href: "/cases", icon: "building" },
+    { name: "帶看提案", href: "/proposals", icon: "proposal" },
     { name: "質晑所課程", href: "/registrations", icon: "book" },
     { name: "活動管理", href: "/events", icon: "calendar" },
     { name: "Deltra ERP", href: "/deltra-erp", icon: "erp" },
@@ -141,6 +161,7 @@ export default function Sidebar() {
 
   // 2. 定義管理員專屬項目
   const adminItems = [
+    { name: "房型資料維護", href: "/rooms", icon: "floorplan" },
     { name: "範本管理", href: "/admin/templates", icon: "template" },
     { name: "人員/帳號管理", href: "/admin/users", icon: "user-cog" },
     { name: "歷程記錄 (管理權限)", href: "/history", icon: "history" },

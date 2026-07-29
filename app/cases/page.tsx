@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -20,6 +20,7 @@ import { createPortal } from "react-dom";
 // --- 引入 Firebase 實時功能 ---
 import { useRouter } from "next/navigation";
 import { db, auth} from "@/lib/firebase";
+import { uploadCaseAttachment, deleteByUrl, deleteManyByUrl } from "@/lib/storage-upload";
 import { onAuthStateChanged } from "firebase/auth";
 import { useSidebar } from "@/lib/sidebar-context";
 import { 
@@ -244,6 +245,12 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
   const [activeTab, setActiveTab] = useState<"info" | "todo" | "copy" | "history">("info");
   const [history, setHistory] = useState<HistoryLog[]>([]);
   const [templates, setTemplates] = useState<{id: string, label: string, content: string}[]>([]);
+  // --- 附件上傳狀態 ---
+  const [uploading, setUploading] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // 新增案件時還沒有文件 ID，先給一個暫用資料夾名稱讓檔案有地方放
+  const draftScope = useRef(`draft-${Date.now()}`);
 
   // 1. 修正後的資料載入 useEffect
   useEffect(() => {
@@ -312,28 +319,59 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
     await addDoc(collection(db, "cases", item.id, "logs"), { action, user: currentUser, timestamp: serverTimestamp() });
   };
 
-  // ✅ 這是修正後不會報錯的版本
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ✅ 真正上傳到 Firebase Storage，重新整理後仍然存在
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // 💡 直接使用瀏覽器暫存網址，不經過 Firebase Storage
-    const newAttachment: Attachment = {
-      name: file.name,
-      url: URL.createObjectURL(file), // 💡 產生暫時網址
-      uploadedAt: new Date().toISOString()
-    };
+    const scope = item?.id || draftScope.current;
+    setUploading(true);
+    setUploadPct(0);
 
-    const updatedAttachments = [...(formData.attachments || []), newAttachment];
-    
-    // 更新本地顯示
-    setFormData(prev => ({ ...prev, attachments: updatedAttachments }));
-    
-    if (!isCreate) {
-      addLogLocal(`已讀取附件預覽: ${file.name}`);
+    try {
+      const url = await uploadCaseAttachment(scope, file, setUploadPct);
+      const newAttachment: Attachment = {
+        name: file.name,
+        url,
+        uploadedAt: new Date().toISOString()
+      };
+      const updatedAttachments = [...(formData.attachments || []), newAttachment];
+      setFormData(prev => ({ ...prev, attachments: updatedAttachments }));
+
+      // 既有案件直接寫回資料庫，避免使用者忘記按儲存導致附件遺失
+      if (!isCreate && item?.id) {
+        await updateDoc(doc(db, "cases", item.id), { attachments: updatedAttachments });
+        addLogLocal(`上傳附件: ${file.name}`);
+      }
+    } catch (err) {
+      console.error("附件上傳失敗:", err);
+      alert(`上傳失敗：${err instanceof Error ? err.message : "未知錯誤"}`);
+    } finally {
+      setUploading(false);
+      setUploadPct(0);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
-    
-    alert(`已讀取「${file.name}」預覽（重新整理後失效）`);
+  };
+
+  // 移除附件時一併刪除雲端檔案，避免留下沒人管的孤兒檔
+  const handleRemoveAttachment = async (idx: number) => {
+    const target = (formData.attachments || [])[idx];
+    if (!target) return;
+    if (!confirm(`確定移除「${target.name}」？\n\n檔案會一併從雲端刪除。`)) return;
+
+    try {
+      await deleteByUrl(target.url);
+    } catch (err) {
+      console.error("刪除雲端檔案失敗:", err);
+    }
+
+    const updated = (formData.attachments || []).filter((_, i) => i !== idx);
+    setFormData(prev => ({ ...prev, attachments: updated }));
+
+    if (!isCreate && item?.id) {
+      await updateDoc(doc(db, "cases", item.id), { attachments: updated });
+      addLogLocal(`移除附件: ${target.name}`);
+    }
   };
 
   const handleToggleTodo = async (todoId: string) => {
@@ -359,6 +397,10 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
   const handleValidateAndSave = () => {
     if (!formData.companyName || !formData.contactPerson) {
       alert("⚠️ 請檢查必填欄位！");
+      return;
+    }
+    if (uploading) {
+      alert("附件還在上傳中，請稍候再儲存");
       return;
     }
     if (!formData.taxId) {
@@ -432,29 +474,35 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
                                     <div className="col-span-2 border-t pt-6 mt-2">
                                       <div className="flex justify-between items-center mb-4 border-l-4 border-red-500 pl-3 bg-red-50 py-2 rounded-r-lg">
                                         <label className="text-sm font-black text-red-600">合約附件管理</label>
-                                        <label className="cursor-pointer bg-red-500 text-white text-[10px] font-black px-4 py-1.5 rounded-xl hover:bg-red-600 shadow-md transition-all active:scale-95">
-                                          + 選取檔案上傳
-                                          <input type="file" className="hidden" onChange={handleFileUpload} />
+                                        <label className={`cursor-pointer text-white text-[10px] font-black px-4 py-1.5 rounded-xl shadow-md transition-all active:scale-95 ${uploading ? "bg-slate-400 cursor-wait" : "bg-red-500 hover:bg-red-600"}`}>
+                                          {uploading ? `上傳中 ${uploadPct}%` : "+ 選取檔案上傳"}
+                                          <input ref={fileInputRef} type="file" className="hidden" disabled={uploading} onChange={handleFileUpload} />
                                         </label>
                                       </div>
+
+                                      {uploading && (
+                                        <div className="mb-4 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                          <div className="h-full bg-red-500 transition-all" style={{ width: `${uploadPct}%` }} />
+                                        </div>
+                                      )}
 
                                       <div className="space-y-3">
                                         {(formData.attachments || []).map((file, idx) => (
                                           <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 hover:border-red-200 transition-colors">
                                             <div className="flex flex-col flex-1 truncate pr-4">
                                               <span className="text-xs font-bold text-slate-700 truncate">{file.name}</span>
-                                              <span className="text-[9px] text-slate-400 italic mt-1">{file.uploadedAt?.substring(0, 10)} 上傳</span>
+                                              <span className="text-[9px] text-slate-400 italic mt-1">
+                                                {file.uploadedAt?.substring(0, 10)} 上傳
+                                                {file.url?.startsWith("blob:") && (
+                                                  <span className="ml-2 text-red-500 font-bold not-italic">舊檔已失效，請重新上傳</span>
+                                                )}
+                                              </span>
                                             </div>
                                             <div className="flex gap-2">
                                               <a href={file.url} target="_blank" className="text-[10px] font-black bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 text-blue-600 hover:bg-blue-50 transition-all">檢視</a>
                                               <button 
                                                 type="button"
-                                                onClick={() => {
-                                                  setFormData(prev => ({
-                                                    ...prev,
-                                                    attachments: (prev.attachments || []).filter((_, i) => i !== idx)
-                                                  }));
-                                                }}
+                                                onClick={() => handleRemoveAttachment(idx)}
                                                 className="text-[10px] font-black bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 text-red-500 hover:bg-red-50"
                                               >
                                                 移除
@@ -626,7 +674,7 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
 
         {(activeTab === "info" || isCreate) && (
           <footer className="p-6 border-t bg-slate-50 flex gap-4 shrink-0">
-            {!isCreate && <button type="button" onClick={() => { if(confirm("確定刪除？")) onDelete(formData.id!); }} className="px-6 py-4 rounded-2xl font-bold border border-red-200 text-red-500 hover:bg-red-50">刪除案件</button>}
+            {!isCreate && <button type="button" onClick={() => { if(confirm(`確定要刪除「${formData.companyName}」這筆案件嗎？\n\n附件會一併從雲端刪除，此動作無法復原。`)) onDelete(formData.id!); }} className="px-6 py-4 rounded-2xl font-bold border border-red-200 text-red-500 hover:bg-red-50">刪除案件</button>}
             <button type="button" onClick={handleValidateAndSave} className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-black transition-all">儲存內容並記錄</button>
           </footer>
         )}
@@ -754,7 +802,10 @@ export default function CasesPage() {
       }
 
       setIsCreating(false); setSelectedId(null);
-    } catch (e) { alert("儲存失敗"); }
+    } catch (e) {
+      console.error("儲存案件失敗:", e);
+      alert(`儲存失敗：${e instanceof Error ? e.message : "未知錯誤"}`);
+    }
   };
 
   // --- 💡 第二步：改為支援多重條件過濾的 byStage 邏輯 ---
@@ -889,7 +940,20 @@ export default function CasesPage() {
           </DndContext>
         </div>
       </main>
-      <DetailDrawer item={cards.find(c => c.id === selectedId) || null} isCreate={isCreating} onClose={() => { setSelectedId(null); setIsCreating(false); }} onSave={handleSave} onDelete={async (id) => { await deleteDoc(doc(db, "cases", id)); setSelectedId(null); }} currentUser={currentUser} />
+      <DetailDrawer
+        item={cards.find(c => c.id === selectedId) || null}
+        isCreate={isCreating}
+        onClose={() => { setSelectedId(null); setIsCreating(false); }}
+        onSave={handleSave}
+        onDelete={async (id) => {
+          const target = cards.find(c => c.id === id);
+          // 先清雲端檔案，否則刪掉案件後這些附件會變成沒人管的孤兒檔
+          await deleteManyByUrl((target?.attachments || []).map(a => a.url));
+          await deleteDoc(doc(db, "cases", id));
+          setSelectedId(null);
+        }}
+        currentUser={currentUser}
+      />
       <style jsx global>{` 
         .board-scroll { scrollbar-gutter: stable; }
         .custom-scrollbar::-webkit-scrollbar { height: 12px; width: 6px; } 
