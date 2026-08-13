@@ -49,6 +49,17 @@ const BILLING_CYCLES = [
 
 const PAUSE_OPTIONS = ["輸給競爭對手", "預算不符", "暫停評估", "其他"];
 
+/**
+ * 卡片左緣色帶對應客戶標籤。
+ * 每張卡都貼「質晑所課程」標籤沒有資訊量，換成客戶等級才看得出誰值得優先跟進。
+ */
+const TAG_ACCENT: Record<CustomerTag, string> = {
+  "一般客戶": "#A5A29B",
+  "MVP客戶": "#6B7C5D",
+  "VIP客戶": "#A8845C",
+};
+const PAUSED_ACCENT = "#B4483C";
+
 interface TodoItem {
   id: string;
   text: string;
@@ -195,45 +206,71 @@ function CardBase({ item, isOverlay = false }: { item: RegCard; isOverlay?: bool
   const days = getDisplayDays(item);
   const isFinished = item.stage === "S9";
   const isPaused = item.stage === "S8";
-  
-  const tagStyles: Record<CustomerTag, string> = {
-    "一般客戶": "bg-white text-slate-400 border border-slate-200",
-    "MVP客戶": "bg-amber-50 text-amber-600 border border-amber-200",
-    "VIP客戶": "bg-yellow-100 text-yellow-700 border border-yellow-300",
-  };
+  const accent = isPaused ? PAUSED_ACCENT : (TAG_ACCENT[item.customerTag] || TAG_ACCENT["一般客戶"]);
 
-  let badgeStyle = (isFinished || isPaused) ? "bg-slate-400" : (days >= 10 ? "bg-red-500" : days >= 3 ? "bg-amber-400" : "bg-emerald-500");
-  
+  // 停留天數只有超過門檻才上色，否則整面看板都是警示色，真正該處理的反而看不出來
+  const dwellTone = (isFinished || isPaused)
+    ? "text-[#8A8780]"
+    : days >= 14
+    ? "text-[#B4483C]"
+    : days >= 7
+    ? "text-[#A97B22]"
+    : "text-[#8A8780]";
+
+  const hasAmount = (item.totalContractAmount || 0) > 0;
+
   return (
-    <div 
-      style={{ backgroundColor: isPaused ? "#FFF5F5" : "#FFF7ED" }} 
-      className={`relative rounded-xl border border-slate-200 p-4 shadow-sm transition-all duration-200 ${isOverlay ? "shadow-2xl ring-2 ring-blue-500 scale-105" : "hover:ring-2 hover:ring-blue-400 cursor-grab"}`}
+    <div
+      className={`group relative bg-white rounded-lg overflow-hidden transition-all ${
+        isOverlay
+          ? "shadow-xl ring-1 ring-black/10 rotate-1 cursor-grabbing"
+          : "shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-[#E8E6E1] hover:shadow-[0_4px_12px_rgba(0,0,0,0.06)] hover:ring-[#D5D2CB] cursor-grab"
+      }`}
     >
-      <div className="flex justify-between items-start mb-2 text-slate-800">
-        <div className="text-sm font-bold line-clamp-1 pr-12">{item.title}</div>
-        <div className={`absolute top-3 right-3 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm ${badgeStyle}`}>
-          {(isPaused || isFinished) ? `耗時 ${days}天` : `停留 ${days}天`}
+      {/* 客戶標籤色帶，暫停中轉為磚紅 */}
+      <div
+        className="absolute left-0 top-0 bottom-0 w-[3px] transition-all group-hover:w-[5px]"
+        style={{ backgroundColor: accent }}
+      />
+
+      <div className="pl-5 pr-4 py-4">
+        <div className="flex items-start justify-between gap-3 mb-2.5">
+          <h4 className="text-[15px] font-semibold text-[#1A1A18] leading-snug tracking-tight line-clamp-2 flex-1">
+            {item.title || "未命名案件"}
+          </h4>
+          <span
+            className={`text-[11px] font-medium tabular-nums shrink-0 pt-0.5 ${dwellTone}`}
+            title={(isFinished || isPaused) ? "從建立到結案的總天數" : "停留在目前階段的天數"}
+          >
+            {days}d
+          </span>
         </div>
-      </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        <div className="bg-orange-500 text-white text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-tighter">質晑所課程</div>
-        <div className={`text-[9px] font-bold px-2 py-0.5 rounded ${tagStyles[item.customerTag]}`}>{item.customerTag}</div>
-      </div>
-
-      <div className="text-[11px] text-slate-700 font-bold mb-1 flex items-center justify-between">
-        <span>窗口: {item.customer || "未填寫"}</span>
-        <span className="text-[9px] font-normal bg-blue-50 text-blue-500 px-1 rounded uppercase">{item.taxType}</span>
-      </div>
-      
-      {isPaused && item.pauseReason && <div className="mb-3 px-2 py-1.5 bg-red-100 border border-red-200 rounded-lg text-[10px] text-red-700 font-bold flex items-start gap-1.5 line-clamp-2"><span>⚠️</span> {item.pauseReason}</div>}
-
-      <div className="flex justify-between items-end mt-3 pt-3 border-t border-slate-50 text-slate-800">
-        <div className="text-lg font-black text-blue-600">{currency(item.totalContractAmount)}</div>
-        <div className="text-right">
-          <p className="text-[10px] text-slate-400 font-medium">房號: {item.roomNo || "未定"}</p>
-          <p className="text-[10px] text-slate-300">信件: {item.mailHandling || "-"}</p>
+        <div className="text-[11px] text-[#8A8780] leading-relaxed space-y-0.5">
+          {item.customer && <div>窗口 {item.customer}</div>}
+          {item.roomNo && <div>房號 {item.roomNo}</div>}
+          {item.customerTag && item.customerTag !== "一般客戶" && (
+            <div className="font-medium" style={{ color: accent }}>{item.customerTag}</div>
+          )}
         </div>
+
+        {isPaused && item.pauseReason && (
+          <div className="mt-3 pt-3 border-t border-[#F0EEE9] text-[11px] text-[#B4483C] leading-relaxed line-clamp-2">
+            暫停原因　{item.pauseReason}
+          </div>
+        )}
+
+        {/* 金額只在真的有數字時才顯示，避免滿版的 $0 搶走注意力 */}
+        {hasAmount && (
+          <div className="mt-3 pt-3 border-t border-[#F0EEE9] flex items-baseline justify-between">
+            <span className="text-[14px] font-semibold text-[#1A1A18] tabular-nums tracking-tight">
+              {currency(item.totalContractAmount)}
+            </span>
+            {item.taxType === "免稅/未稅" && (
+              <span className="text-[10px] text-[#A5A29B]">未稅</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -247,15 +284,24 @@ function SortableCard({ item, onClick }: { item: RegCard; onClick: () => void })
 
 function StageColumn({ stage, cards, onCardClick }: { stage: (typeof STAGES)[0]; cards: RegCard[]; onCardClick: (id: string) => void }) {
   const { setNodeRef } = useDroppable({ id: stage.id });
+  // 階段代碼與名稱拆開，代碼作為次要標記，名稱才是讀取重點
+  const [code, ...rest] = stage.title.split(" ");
+  const name = rest.join(" ");
+
   return (
-    <div ref={setNodeRef} className="flex min-h-full w-[300px] flex-col rounded-2xl border border-slate-200 bg-slate-50/50 shadow-sm shrink-0 self-stretch overflow-hidden">
-      <div className="p-4 pb-3 shrink-0 bg-white text-slate-800 border-b border-slate-100">
-        <h3 className="font-bold text-sm flex items-center justify-between">{stage.title} <span className="bg-slate-200 text-slate-500 text-[10px] px-2 py-0.5 rounded-full font-bold">{cards.length}</span></h3>
+    <div ref={setNodeRef} className="flex min-h-full w-[290px] flex-col shrink-0 self-stretch overflow-hidden">
+      <div className="px-1 pb-3 shrink-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10px] font-semibold text-[#B0ADA6] tabular-nums tracking-wider">{code}</span>
+          <h3 className="text-[13px] font-semibold text-[#3A3833] tracking-tight truncate">{name}</h3>
+          <span className="ml-auto text-[11px] font-medium text-[#B0ADA6] tabular-nums shrink-0">{cards.length}</span>
+        </div>
+        <div className="mt-2.5 h-px bg-[#E0DDD6]" />
       </div>
       <SortableContext items={cards.map((x) => x.id)} strategy={verticalListSortingStrategy}>
-        <div className="flex-1 min-h-0 px-3 pt-4 pb-12 space-y-4 overflow-y-auto custom-scrollbar text-slate-800">
+        <div className="flex-1 min-h-0 px-1 pt-1 pb-12 space-y-2.5 overflow-y-auto custom-scrollbar">
           {cards.map((item) => <SortableCard key={item.id} item={item} onClick={() => onCardClick(item.id)} />)}
-          {cards.length === 0 && <div className="min-h-[140px] border-2 border-dashed border-slate-200 rounded-xl bg-white/50" />}
+          {cards.length === 0 && <div className="min-h-[120px] rounded-lg border border-dashed border-[#E0DDD6]" />}
         </div>
       </SortableContext>
     </div>
@@ -704,13 +750,16 @@ export default function RegistrationsPage() {
   if (!hasMounted || loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 bg-slate-50 text-slate-800">載入中...</div>;
 
   return (
-    <div style={{ left: sidebarWidth, transition: "left 200ms" }} className="fixed inset-0 flex flex-col bg-slate-50/50 overflow-hidden text-slate-800">
-      <header className="p-8 pb-4 shrink-0 bg-white border-b shadow-sm z-10 text-slate-800">
-        <div className="flex justify-between items-center mb-6 text-slate-800">
-          <h1 className="text-2xl font-bold underline decoration-blue-500/30 text-slate-800">質晑所課程管理看板</h1>
-          <button onClick={() => setIsCreating(true)} className="bg-slate-900 text-white px-5 py-2 rounded-lg font-bold shadow-md hover:bg-black transition-all text-xs">+ 新增案件</button>
+    <div style={{ left: sidebarWidth, transition: "left 200ms", backgroundColor: "#F5F4F1" }} className="fixed inset-0 flex flex-col overflow-hidden text-slate-800">
+      <header className="px-8 pt-8 pb-6 shrink-0 bg-white border-b border-[#E8E6E1] z-10">
+        <div className="flex justify-between items-center mb-5">
+          <div>
+            <h1 className="text-[22px] font-semibold text-[#1A1A18] tracking-tight">質晑所課程管理看板</h1>
+            <p className="text-[11px] text-[#A5A29B] mt-1">左側色帶代表客戶標籤，數字為停留天數</p>
+          </div>
+          <button onClick={() => setIsCreating(true)} className="bg-[#1A1A18] text-white px-5 py-2.5 rounded-lg text-[13px] font-medium hover:bg-black transition-all">新增案件</button>
         </div>
-        <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-800">
+        <div className="flex items-center gap-3 bg-[#FAFAF8] p-2 rounded-lg border border-[#E8E6E1] text-slate-800">
           <div className="flex items-center gap-2 text-slate-800"><span className="text-[10px] font-black text-slate-400 uppercase text-slate-400">搜尋</span><input placeholder="名稱/窗口/統編" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} className="px-2 py-1.5 border border-slate-200 rounded-lg text-xs w-36 outline-none focus:border-blue-400 bg-white text-slate-800" /></div>
           <div className="h-4 w-px bg-slate-200" /><div className="flex items-center gap-2 text-slate-800"><span className="text-[10px] font-black text-slate-400 uppercase text-slate-400">月份</span><div className="flex items-center gap-1 text-slate-800"><input type="month" value={monthStartInput} onChange={(e) => setMonthStartInput(e.target.value)} className="px-1.5 py-1 border border-slate-200 rounded text-xs outline-none bg-white text-slate-800" /><span className="text-slate-300 text-[10px]">~</span><input type="month" value={monthEndInput} onChange={(e) => setMonthEndInput(e.target.value)} className="px-1.5 py-1 border border-slate-200 rounded text-xs outline-none bg-white text-slate-800" /></div></div>
           <div className="h-4 w-px bg-slate-200" /><div className="flex items-center gap-2 text-slate-800"><span className="text-[10px] font-black text-slate-400 uppercase text-slate-400">標籤</span><select value={tagInput} onChange={(e) => setTagInput(e.target.value)} className="px-2 py-1 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 bg-white w-28 text-slate-800"><option value="全部">全部標籤</option>{CUSTOMER_TAGS.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
@@ -719,10 +768,10 @@ export default function RegistrationsPage() {
         </div>
       </header>
 
-      {overdueAlerts.length > 0 && <div className="px-8 mt-2 space-y-1 text-slate-800">{overdueAlerts.map(a => (<div key={a.id} className="bg-red-50 border-l-4 border-red-500 p-3 rounded-r-lg shadow-sm flex items-center justify-between text-slate-800"><div className="flex items-center gap-2 text-slate-800"><span className="text-sm">⚠️</span><h4 className="text-red-800 font-black text-[11px] text-red-800">簽約逾期：{a.title}</h4></div><button onClick={() => handleSignOff(a.id)} className="px-3 py-1 text-[10px] font-bold text-white bg-red-600 rounded shadow-sm hover:bg-red-700 text-white">簽署</button></div>))}</div>}
+      {overdueAlerts.length > 0 && <div className="px-8 mt-3 space-y-1.5">{overdueAlerts.map(a => (<div key={a.id} className="bg-white border-l-[3px] border-[#B4483C] ring-1 ring-[#E8E6E1] px-4 py-2.5 rounded-r-lg flex items-center justify-between"><h4 className="text-[#B4483C] font-medium text-[12px]">簽約逾期　{a.title}</h4><button onClick={() => handleSignOff(a.id)} className="px-3 py-1 text-[11px] font-medium text-white bg-[#B4483C] rounded hover:bg-[#9c3e33] transition-colors">簽署</button></div>))}</div>}
 
-      <main className="flex-1 min-h-0 px-8 pt-4 pb-6 flex flex-col text-slate-800">
-        <div className="board-scroll flex-1 min-h-0 overflow-auto custom-scrollbar rounded-b-2xl text-slate-800">
+      <main className="flex-1 min-h-0 px-8 pt-5 pb-6 flex flex-col">
+        <div className="board-scroll flex-1 min-h-0 overflow-auto custom-scrollbar">
           <DndContext sensors={sensors} onDragStart={(e) => setActiveId(String(e.active.id))} onDragEnd={async (e) => {
             const { active, over } = e; setActiveId(null); if (!over) return;
             const aId = String(active.id); const oId = String(over.id);
@@ -755,7 +804,7 @@ export default function RegistrationsPage() {
               }
             }
           }}>
-            <div className="inline-flex h-full min-h-0 gap-8 items-stretch pr-8 pb-8 text-slate-800">
+            <div className="inline-flex h-full min-h-0 gap-6 items-stretch pr-8 pb-8">
               {STAGES.map((s) => (<StageColumn key={s.id} stage={s} cards={byStage.get(s.id) || []} onCardClick={setSelectedId} />))}
             </div>
             {createPortal(<DragOverlay dropAnimation={null}>{activeId ? <CardBase item={cards.find(c => c.id === activeId)!} isOverlay /> : null}</DragOverlay>, document.body)}
@@ -765,7 +814,7 @@ export default function RegistrationsPage() {
 
       <DetailDrawer item={cards.find(c => c.id === selectedId) || null} isCreate={isCreating} onClose={() => { setSelectedId(null); setIsCreating(false); }} onSave={handleSave} currentUser={currentUser} onDelete={handleDelete} />
       <PauseReasonModal isOpen={!!pendingPauseAction} onConfirm={handleConfirmPause} onCancel={() => setPendingPauseAction(null)} />
-      <style jsx global>{` .board-scroll { scrollbar-gutter: stable; } .custom-scrollbar::-webkit-scrollbar { width: 12px; height: 12px; } .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 999px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; border: 3px solid #f1f5f9; } .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; } `}</style>
+      <style jsx global>{` .board-scroll { scrollbar-gutter: stable; } .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 10px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #D5D2CB; border-radius: 999px; border: 2px solid #F5F4F1; } .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #B0ADA6; } `}</style>
     </div>
   );
 }

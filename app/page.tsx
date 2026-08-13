@@ -5,8 +5,33 @@ import { collection, onSnapshot, doc, setDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ComposedChart, Line, PieChart, Pie, Cell, Legend,
+  ComposedChart, Line, Legend,
 } from "recharts";
+
+/* ============================================================
+   配色：沿用各看板的低彩度建材色，避免儀表板自成一套視覺
+   ============================================================ */
+const C = {
+  ink: "#1A1A18",
+  body: "#3A3833",
+  muted: "#8A8780",
+  faint: "#B0ADA6",
+  hairline: "#E8E6E1",
+  surface: "#FAFAF8",
+  page: "#F5F4F1",
+  office: "#4E6A74",
+  course: "#A8845C",
+  event: "#87687A",
+  success: "#4F7A52",
+  warn: "#A97B22",
+  danger: "#B4483C",
+};
+
+const SOURCE_COLOR: Record<string, string> = {
+  "辦公室": C.office,
+  "質晑所課程": C.course,
+  "活動": C.event,
+};
 
 // --- 三條產品線的階段定義（跟各自看板的 STAGES 保持一致） ---
 const STAGE_DEFS: Record<string, { id: string; title: string }[]> = {
@@ -74,8 +99,39 @@ const CLOSE_STAGE: Record<string, string> = {
   "活動": "S8",
 };
 
+/**
+ * 判斷一筆 members 文件屬於哪條產品線。
+ *
+ * members 裡除了課程與活動的案件，還混著辦公室出租同步過去的客戶資料，
+ * 以及客戶資料管理直接建立的主檔。若用「不是課程就是活動」來分類，
+ * 辦公室的業績會在活動那邊被重複計算一次，活動的所有指標都會失真。
+ * 因此改為明確比對標籤，兩者都不符合就排除。
+ */
+function classifyMember(m: any): "質晑所課程" | "活動" | null {
+  const tags = [
+    ...(Array.isArray(m.productLines) ? m.productLines : []),
+    ...(Array.isArray(m.tags) ? m.tags : []),
+  ];
+  if (tags.includes("質晑所課程")) return "質晑所課程";
+  if (tags.includes("活動管理")) return "活動";
+  return null;
+}
+
 function daysBetween(a: number, b: number) {
   return Math.max(0, Math.floor((b - a) / (1000 * 60 * 60 * 24)));
+}
+
+/**
+ * 取得該日期所屬那一週的星期一 00:00。
+ * 每週營運報表也是以星期一為起始日，兩份報表的「本週」必須是同一個區間，
+ * 否則同一筆案件在兩邊會被算進不同的週次。
+ */
+function startOfMonday(date: Date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = d.getDay(); // 0 = 星期日
+  d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
 // 計算某張卡片在某個階段的停留天數：一般階段算到下一次轉換(或現在)；最終階段凍結成 S1~該階段的總天數
@@ -92,7 +148,7 @@ function computeStageDuration(item: any, stageId: string, finalStages: string[])
   }
 
   const laterEntries = Object.entries(item.stageHistory || {})
-    .filter(([key, val]) => key !== stageId)
+    .filter(([key]) => key !== stageId)
     .map(([, val]) => toJsDate(val))
     .filter((d): d is Date => d !== null && d.getTime() > entryTime)
     .map(d => d.getTime());
@@ -162,256 +218,283 @@ function formatCurrency(n: number) {
   }).format(n);
 }
 
-// --- 專業數據統計卡片 ---
-function AnalyticCard({ title, value, subValue, hint, trend, trendType = "up", type = "default", onClick }: any) {
-  const styles = {
-    default: "bg-white border-slate-100",
-    danger: "bg-red-50 border-red-200 ring-2 ring-red-500/10",
-    success: "bg-emerald-50/20 border-emerald-100 ring-2 ring-emerald-500/10",
-  };
+/* ============================================================
+   共用視覺元件
+   ============================================================ */
 
+function StatCard({ title, value, subValue, hint, trend, trendType = "up", tone = "default", active, onClick }: any) {
+  const clickable = !!onClick;
   return (
-    <div 
+    <button
+      type="button"
       onClick={onClick}
-      className={`rounded-3xl border p-7 shadow-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-1 cursor-pointer group ${styles[type as keyof typeof styles]}`}
+      disabled={!clickable}
+      title={hint}
+      className={`text-left w-full bg-white rounded-lg border px-5 py-4 transition-all ${
+        active
+          ? "border-[#B0ADA6] ring-1 ring-[#E0DDD6]"
+          : "border-[#E8E6E1] " + (clickable ? "hover:border-[#D5D2CB]" : "")
+      } ${clickable ? "cursor-pointer" : "cursor-default"}`}
     >
-      <div className="flex justify-between items-start">
-        <span className="text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]">{title}</span>
+      <div className="flex justify-between items-baseline gap-2">
+        <span className="text-[11px] font-medium text-[#8A8780] tracking-wide truncate">{title}</span>
         {trend && (
-          <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black ${
-            trendType === "up" ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-600"
-          }`}>
+          <span
+            className="text-[11px] font-medium tabular-nums shrink-0"
+            style={{ color: trendType === "up" ? C.success : C.danger }}
+          >
             {trend}
-          </div>
+          </span>
         )}
       </div>
-      <div className="mt-5 flex items-baseline gap-3">
-        <div className={`text-3xl font-black tracking-tight ${type === 'danger' ? 'text-red-600' : 'text-slate-800'}`}>{value}</div>
-        {subValue && <div className="text-xs font-bold text-slate-400">{subValue}</div>}
+      <div className="mt-2.5 flex items-baseline gap-2">
+        <span
+          className="text-[28px] font-semibold tracking-tight tabular-nums leading-none"
+          style={{ color: tone === "danger" ? C.danger : C.ink }}
+        >
+          {value}
+        </span>
+        {subValue && <span className="text-[12px] text-[#A5A29B]">{subValue}</span>}
       </div>
-      <p className="mt-3 text-[11px] font-bold text-slate-400/80 italic group-hover:text-slate-600 transition-colors">{hint}</p>
+    </button>
+  );
+}
+
+function SectionHead({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 mb-4">
+      <h3 className="text-[11px] font-semibold text-[#8A8780] tracking-[0.12em] uppercase shrink-0">
+        {children}
+      </h3>
+      <div className="h-px bg-[#E8E6E1] flex-1" />
+      {action}
+    </div>
+  );
+}
+
+/** 說明文字改成可展開，預設收起，不佔用固定高度 */
+function Panel({ title, description, children }: any) {
+  const [showHint, setShowHint] = useState(false);
+  return (
+    <section className="bg-white rounded-lg border border-[#E8E6E1] px-5 py-4">
+      <SectionHead
+        action={
+          description ? (
+            <button
+              type="button"
+              onClick={() => setShowHint(v => !v)}
+              className="shrink-0 w-4 h-4 rounded-full border border-[#E0DDD6] text-[9px] text-[#B0ADA6] hover:text-[#3A3833] hover:border-[#B0ADA6] transition-colors leading-none flex items-center justify-center"
+              title="說明"
+            >
+              ?
+            </button>
+          ) : undefined
+        }
+      >
+        {title}
+      </SectionHead>
+      {showHint && description && (
+        <p className="mb-4 -mt-1 text-[11px] text-[#A5A29B] leading-relaxed bg-[#FAFAF8] border border-[#F0EEE9] rounded-md px-3 py-2">
+          {description}
+        </p>
+      )}
+      {children}
+    </section>
+  );
+}
+
+function TabRow({ tabs, value, onChange }: { tabs: { key: string; label: string }[]; value: string; onChange: (k: any) => void }) {
+  return (
+    <div className="flex gap-1 mb-4">
+      {tabs.map(t => (
+        <button
+          key={t.key}
+          onClick={() => onChange(t.key)}
+          className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-all border ${
+            value === t.key
+              ? "bg-[#1A1A18] text-white border-[#1A1A18]"
+              : "bg-white text-[#8A8780] border-[#E0DDD6] hover:border-[#B0ADA6]"
+          }`}
+        >
+          {t.label}
+        </button>
+      ))}
     </div>
   );
 }
 
 // --- 通用詳情清單組件 ---
-function DetailList({ title, list, themeColor }: { title: string; list: any[]; themeColor: string }) {
-  if (list.length === 0) return null;
-  const themes: any = {
-    red: "bg-red-500 border-red-100 text-red-600",
-    blue: "bg-blue-600 border-blue-100 text-blue-600",
-    emerald: "bg-emerald-600 border-emerald-100 text-emerald-600",
-  };
+function DetailList({ title, list }: { title: string; list: any[] }) {
+  if (list.length === 0) {
+    return (
+      <div className="bg-white rounded-lg border border-[#E8E6E1] py-16 text-center">
+        <p className="text-[12px] text-[#A5A29B]">此區間沒有符合的案件</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="mt-8 animate-in slide-in-from-top-4 duration-500">
-      <div className={`bg-white rounded-[32px] border ${themes[themeColor].split(' ')[1]} shadow-2xl overflow-hidden`}>
-        <div className={`${themes[themeColor].split(' ')[0]} px-8 py-4 flex justify-between items-center`}>
-          <h3 className="text-white font-black tracking-wider flex items-center gap-2">
-            {title} <span className="bg-white px-2 py-0.5 rounded-full text-[10px] font-black" style={{ color: themes[themeColor].split(' ')[2] }}>{list.length}</span>
-          </h3>
-        </div>
-        <div className="overflow-x-auto text-slate-800">
-          <table className="w-full text-left table-auto">
-            <thead className="bg-slate-50 border-b border-slate-100">
-              <tr>
-                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">產品線</th>
-                <th className="px-4 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">公司/案件名稱</th>
-                <th className="px-4 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">窗口/聯絡人</th>
-                <th className="px-4 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">建立日期</th>
-                <th className="px-4 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">金額</th>
-                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-wider">狀態</th>
+    <div className="bg-white rounded-lg border border-[#E8E6E1] overflow-hidden">
+      <div className="px-6 py-4 border-b border-[#E8E6E1] flex items-center gap-2">
+        <h3 className="text-[13px] font-semibold text-[#1A1A18]">{title}</h3>
+        <span className="text-[11px] text-[#A5A29B] tabular-nums">{list.length}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-[#F0EEE9]">
+              <th className="px-6 py-3 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase">產品線</th>
+              <th className="px-4 py-3 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase">案件名稱</th>
+              <th className="px-4 py-3 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase">窗口</th>
+              <th className="px-4 py-3 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase">建立日期</th>
+              <th className="px-4 py-3 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase text-right">金額</th>
+              <th className="px-6 py-3 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase">狀態</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((item, i) => (
+              <tr 
+                key={i} 
+                className="border-t border-[#F0EEE9] hover:bg-[#FAFAF8] transition-colors cursor-pointer"
+                onClick={() => {
+                  const path = item.source === '辦公室' ? '/cases' : 
+                               item.source === '質晑所課程' ? '/registrations' : '/events';
+                  window.location.href = `${path}?id=${item.id}`;
+                }}
+              >
+                <td className="px-6 py-3.5">
+                  <span
+                    className="text-[10px] font-medium px-2 py-1 rounded"
+                    style={{
+                      backgroundColor: `${SOURCE_COLOR[item.source] || C.muted}14`,
+                      color: SOURCE_COLOR[item.source] || C.muted,
+                    }}
+                  >
+                    {item.source}
+                  </span>
+                </td>
+                <td className="px-4 py-3.5 text-[13px] text-[#1A1A18]">{item.title || item.name || item.companyName}</td>
+                <td className="px-4 py-3.5 text-[12px] text-[#5F5E5A]">{item.customer || item.contactPerson}</td>
+                <td className="px-4 py-3.5 text-[12px] text-[#8A8780] tabular-nums">
+                  {(() => {
+                    const d = toJsDate(item.createdAt);
+                    if (!d) return "—";
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                  })()}
+                </td>
+                <td className="px-4 py-3.5 text-[13px] text-[#1A1A18] tabular-nums text-right">{formatCurrency(item.amount || 0)}</td>
+                <td className="px-6 py-3.5 text-[12px]">
+                  {item.isOverdue
+                    ? <span style={{ color: C.danger }}>逾期 {item.overdueDays} 天</span>
+                    : <span className="text-[#8A8780]">{item.stage || "進行中"}</span>}
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {list.map((item, i) => (
-                <tr 
-                  key={i} 
-                  className="hover:bg-slate-50/50 transition-colors cursor-pointer"
-                  onClick={() => {
-                    const path = item.source === '辦公室' ? '/cases' : 
-                                 item.source === '質晑所課程' ? '/registrations' : '/events';
-                    window.location.href = `${path}?id=${item.id}`;
-                  }}
-                >
-                  <td className="px-8 py-5">
-                    <span className={`text-[9px] font-black px-2.5 py-1.5 rounded uppercase tracking-tight ${
-                      item.source === '辦公室' ? 'bg-blue-100 text-blue-700' : 
-                      item.source === '工商' ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'
-                    }`}>
-                      {item.source}
-                    </span>
-                  </td>
-                  <td className="px-4 py-5 font-bold text-slate-900 text-sm">{item.title || item.name || item.companyName}</td>
-                  <td className="px-4 py-5 text-sm text-slate-600 font-medium">{item.customer || item.contactPerson}</td>
-                  <td className="px-4 py-5 text-sm text-slate-500 font-mono tracking-tight">
-                    {(() => {
-                      const d = toJsDate(item.createdAt);
-                      if (!d) return "-";
-                      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-                    })()}
-                  </td>
-                  <td className="px-4 py-5 text-sm font-bold text-slate-800">{formatCurrency(item.amount || 0)}</td>
-                  <td className="px-8 py-5 text-xs text-slate-500 font-medium">
-                    {item.isOverdue ? <span className="text-red-600 font-extrabold bg-red-100 px-2 py-1 rounded">逾期 {item.overdueDays} 天</span> : (item.stage || "進行中")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
 
 // --- 可重複使用的「設定目標金額」輸入列 ---
-function TargetInput({ value, onChange, onSave, saving }: { value: string; onChange: (v: string) => void; onSave: () => void; saving: boolean }) {
+function TargetInput({ period, value, onChange, onSave, saving }: { period: string; value: string; onChange: (v: string) => void; onSave: () => void; saving: boolean }) {
   return (
-    <div className="flex items-center gap-3 mb-6">
-      <span className="text-xs font-bold text-slate-500">設定月目標金額（其他區間自動換算）：</span>
+    <div className="flex items-center gap-2.5 mb-4">
+      <span className="text-[11px] text-[#8A8780] shrink-0">{period}目標</span>
       <input
         type="number"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter") onSave(); }}
-        placeholder="輸入目標金額"
-        className="px-3 py-2 border border-slate-200 rounded-lg text-sm w-40 outline-none focus:border-blue-400"
+        placeholder="輸入金額"
+        className="bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-3 py-1.5 text-[13px] w-32 outline-none focus:bg-white focus:border-[#B0ADA6] transition-colors tabular-nums text-[#1A1A18] placeholder:text-[#C4C1B9]"
       />
       <button
         onClick={onSave}
         disabled={saving}
-        className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm disabled:opacity-50"
+        className="px-3 py-1.5 text-[12px] font-medium text-[#3A3833] bg-white border border-[#E0DDD6] rounded-lg hover:border-[#B0ADA6] transition-colors disabled:opacity-50"
       >
-        {saving ? "儲存中..." : "儲存目標"}
+        {saving ? "儲存中…" : "儲存"}
       </button>
     </div>
   );
 }
 
-function MetricProgress({ label, value, percentage, colorClass }: any) {
+function MetricProgress({ label, value, percentage, color }: any) {
+  const pct = Math.min(100, Math.max(0, percentage));
   return (
-    <div className="group border border-slate-100 rounded-2xl p-5 bg-white transition-all hover:border-blue-100 hover:shadow-sm">
-      <div className="flex justify-between items-center mb-4">
-        <span className="text-xs font-black text-slate-600 uppercase tracking-tighter">{label}</span>
+    <div>
+      <div className="flex justify-between items-baseline mb-1">
+        <span className="text-[12px] text-[#3A3833]">{label}</span>
         <div className="flex items-baseline gap-1.5">
-          <span className="text-sm font-black text-slate-950">{value}</span>
-          <span className="text-[11px] font-bold text-slate-400">({Math.round(percentage)}%)</span>
+          <span className="text-[12px] font-medium text-[#1A1A18] tabular-nums">{value}</span>
+          <span className="text-[10px] text-[#B0ADA6] tabular-nums w-8 text-right">{Math.round(percentage)}%</span>
         </div>
       </div>
-      <div className="h-3 w-full bg-slate-50 rounded-full overflow-hidden border border-slate-100 relative">
-        <div className={`h-full absolute left-0 top-0 rounded-full transition-all duration-[800ms] ease-out ${colorClass}`} style={{ width: `${Math.min(100, Math.max(0, percentage))}%` }} />
+      <div className="h-1 w-full bg-[#F0EEE9] rounded-full overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-700"
+          style={{ width: `${pct}%`, backgroundColor: color }}
+        />
       </div>
     </div>
   );
 }
 
-// --- 精緻化圖表：橫向排行長條圖（瓶頸分析、暫停原因、待辦完成率共用） ---
+// --- 橫向排行長條圖（瓶頸分析、暫停原因、待辦完成率共用） ---
 function HorizontalBarChart({ data, color, unit = "", tickStep = 5 }: { data: { label: string; value: number }[]; color: string; unit?: string; tickStep?: number }) {
-  if (data.length === 0) return <p className="text-xs text-slate-400 italic">目前沒有足夠資料</p>;
-  const height = Math.max(200, data.length * 46) + 30;
+  if (data.length === 0) return <p className="text-[12px] text-[#A5A29B] py-8 text-center">目前沒有足夠資料</p>;
+  const height = Math.max(200, data.length * 44) + 30;
   const maxValue = Math.max(...data.map(d => d.value), 0);
-  const minTicks = 4; // 至少顯示 0、5、10、15、20 這樣的間距，不會因為資料量小就緊貼在最大值
+  const minTicks = 4;
   const axisMax = Math.max(tickStep * minTicks, Math.ceil(maxValue / tickStep) * tickStep);
   const ticks: number[] = [];
   for (let v = 0; v <= axisMax; v += tickStep) ticks.push(v);
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 24 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+      <BarChart data={data} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 20 }}>
+        <CartesianGrid strokeDasharray="2 4" stroke={C.hairline} horizontal={false} />
         <XAxis
           type="number"
           domain={[0, axisMax]}
           ticks={ticks}
           allowDecimals={false}
-          tick={{ fontSize: 11, fill: "#94a3b8" }}
-          axisLine={{ stroke: "#e2e8f0" }}
-          label={{ value: unit ? `數值（${unit.trim()}）` : "數值", position: "insideBottom", offset: -16, fontSize: 12, fill: "#64748b", fontWeight: 700 }}
+          tick={{ fontSize: 11, fill: C.faint }}
+          axisLine={{ stroke: C.hairline }}
+          tickLine={false}
         />
-        <YAxis type="category" dataKey="label" width={180} tick={{ fontSize: 11, fill: "#475569" }} axisLine={false} tickLine={false} />
-        <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} formatter={(v: any) => [`${v}${unit}`, ""]} />
-        <Bar dataKey="value" fill={color} radius={[0, 6, 6, 0]} barSize={18} />
+        <YAxis type="category" dataKey="label" width={180} tick={{ fontSize: 11, fill: C.body }} axisLine={false} tickLine={false} />
+        <Tooltip
+          cursor={{ fill: C.surface }}
+          contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12, boxShadow: "none" }}
+          formatter={(v: any) => [`${v}${unit}`, ""]}
+        />
+        <Bar dataKey="value" fill={color} radius={[0, 3, 3, 0]} barSize={14} />
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
-// --- 精緻化圖表：近6個月趨勢（長條=新增案件、折線=業績，雙軸合併呈現） ---
+// --- 近6個月趨勢（長條=新增案件、折線=業績，雙軸合併呈現） ---
 function TrendComboChart({ data }: { data: { month: string; newCount: number; revenue: number }[] }) {
   const chartData = data.map(d => ({ month: `${d.month.substring(5)}月`, 新增案件: d.newCount, 成交業績萬元: Math.round(d.revenue / 10000) }));
   return (
-    <ResponsiveContainer width="100%" height={340}>
-      <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 24 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-        <XAxis
-          dataKey="month"
-          tick={{ fontSize: 11, fill: "#94a3b8" }}
-          axisLine={{ stroke: "#e2e8f0" }}
-          label={{ value: "月份", position: "insideBottom", offset: -16, fontSize: 12, fill: "#64748b", fontWeight: 700 }}
+    <ResponsiveContainer width="100%" height={300}>
+      <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+        <CartesianGrid strokeDasharray="2 4" stroke={C.hairline} vertical={false} />
+        <XAxis dataKey="month" tick={{ fontSize: 11, fill: C.faint }} axisLine={{ stroke: C.hairline }} tickLine={false} />
+        <YAxis yAxisId="left" tick={{ fontSize: 11, fill: C.faint }} axisLine={false} tickLine={false} allowDecimals={false} />
+        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: C.faint }} axisLine={false} tickLine={false} />
+        <Tooltip
+          cursor={{ fill: C.surface }}
+          contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12, boxShadow: "none" }}
         />
-        <YAxis
-          yAxisId="left"
-          tick={{ fontSize: 11, fill: "#94a3b8" }}
-          axisLine={{ stroke: "#e2e8f0" }}
-          allowDecimals={false}
-          label={{ value: "新增案件數（件）", angle: -90, position: "insideLeft", offset: 10, fontSize: 12, fill: "#3b82f6", fontWeight: 700 }}
-        />
-        <YAxis
-          yAxisId="right"
-          orientation="right"
-          tick={{ fontSize: 11, fill: "#94a3b8" }}
-          axisLine={{ stroke: "#e2e8f0" }}
-          label={{ value: "成交業績（萬元）", angle: 90, position: "insideRight", offset: 10, fontSize: 12, fill: "#10b981", fontWeight: 700 }}
-        />
-        <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
-        <Legend wrapperStyle={{ fontSize: 12 }} verticalAlign="top" height={32} />
-        <Bar yAxisId="left" dataKey="新增案件" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={28} />
-        <Line yAxisId="right" type="monotone" dataKey="成交業績萬元" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
+        <Legend wrapperStyle={{ fontSize: 11, color: C.muted }} verticalAlign="top" height={28} iconType="circle" iconSize={7} />
+        <Bar yAxisId="left" dataKey="新增案件" fill={C.office} radius={[3, 3, 0, 0]} barSize={22} />
+        <Line yAxisId="right" type="monotone" dataKey="成交業績萬元" stroke={C.success} strokeWidth={2} dot={{ r: 3, fill: C.success }} />
       </ComposedChart>
     </ResponsiveContainer>
-  );
-}
-
-// --- 精緻化圖表：轉換率甜甜圈圖（各產品線成交/暫停/進行中比例） ---
-const DONUT_COLORS = ["#10b981", "#ef4444", "#94a3b8"];
-function ConversionDonut({ success, paused, total }: { success: number; paused: number; total: number }) {
-  const active = Math.max(0, total - success - paused);
-  const data = [
-    { name: "成交", value: success },
-    { name: "暫停", value: paused },
-    { name: "進行中", value: active },
-  ].filter(d => d.value > 0);
-  if (data.length === 0) return <p className="text-xs text-slate-400 italic text-center py-10">目前沒有案件</p>;
-  return (
-    <ResponsiveContainer width="100%" height={220}>
-      <PieChart>
-        <Pie data={data} dataKey="value" nameKey="name" innerRadius={50} outerRadius={80} paddingAngle={3}>
-          {data.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
-        </Pie>
-        <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
-      </PieChart>
-    </ResponsiveContainer>
-  );
-}
-
-function DataSection({ title, tag, themeColor, description, children }: any) {
-  const themes: any = {
-    blue: "border-blue-100 bg-blue-50 text-blue-600",
-    emerald: "border-emerald-100 bg-emerald-50 text-emerald-600",
-    amber: "border-amber-100 bg-amber-50 text-amber-600",
-  };
-  return (
-    <div className="bg-white rounded-[40px] border border-slate-100 p-10 shadow-sm transition-all hover:border-slate-200 hover:shadow-md">
-      <header className="mb-10 flex justify-between items-center pb-6 border-b border-slate-100">
-        <h3 className="text-xl font-black text-slate-950 tracking-tight">{title}</h3>
-        <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest ${themes[themeColor]}`}>{tag}</span>
-      </header>
-      {children}
-      {description && (
-        <p className="mt-8 pt-6 border-t border-slate-50 text-[11px] text-slate-400 italic leading-relaxed">💡 {description}</p>
-      )}
-    </div>
   );
 }
 
@@ -426,53 +509,54 @@ export default function ProfessionalDashboard() {
   const [pauseReasonTab, setPauseReasonTab] = useState<"overall" | "辦公室" | "質晑所課程" | "活動">("overall");
   const [todoTab, setTodoTab] = useState<"辦公室" | "質晑所課程" | "活動">("辦公室");
   type TargetKey = "overall" | "office" | "registration" | "event";
-  const TARGET_FIELD_MAP: Record<TargetKey, string> = {
-    overall: "monthlyTarget", // 沿用舊欄位名稱，向下相容之前已存過的目標值
-    office: "office",
-    registration: "registration",
-    event: "event",
-  };
 
-  // 目標金額固定用「月」為輸入單位，其他時間篩選按比例換算，比較基準才會一致
-  const PERIOD_MULTIPLIER: Record<string, number> = {
-    "今日": 1 / 30,
-    "本週": 7 / 30,
-    "本月": 1,
-    "本季": 3,
-    "今年": 12,
-  };
-  const scaleTarget = (monthlyValue: number) => monthlyValue * (PERIOD_MULTIPLIER[timeFilter] ?? 1);
+  /**
+   * 目標依時間區間各自獨立設定，不從月目標換算。
+   *
+   * 業績目標本來就不是線性的（招商月的目標會比淡季高），
+   * 用月目標除以 30 得到的日目標沒有業務意義。
+   * 今日不提供目標設定，那個區間看絕對金額即可。
+   */
+  const TARGET_PERIODS = ["本週", "本月", "本季", "今年"] as const;
+  const hasTarget = (TARGET_PERIODS as readonly string[]).includes(timeFilter);
 
-  const [targets, setTargets] = useState<Record<TargetKey, number>>({ overall: 0, office: 0, registration: 0, event: 0 });
+  // Firestore 欄位命名：{項目}_{區間}，例如 office_本月。
+  // overall_本月 沿用舊的 monthlyTarget，之前設定過的數字不會消失。
+  const targetField = (key: TargetKey, period: string) =>
+    key === "overall" && period === "本月" ? "monthlyTarget" : `${key}_${period}`;
+
+  const [targetData, setTargetData] = useState<Record<string, number>>({});
   const [targetInputs, setTargetInputs] = useState<Record<TargetKey, string>>({ overall: "", office: "", registration: "", event: "" });
   const [targetSaving, setTargetSaving] = useState<TargetKey | null>(null);
+
+  // 取得目前時間區間對應的目標金額
+  const targetOf = (key: TargetKey) => targetData[targetField(key, timeFilter)] || 0;
 
   // 目標金額存在 Firestore 的共用設定文件，所有人打開都會看到同一組數字
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "settings", "targets"), (snap) => {
-      const data = snap.exists() ? snap.data() : {};
-      const next: Record<TargetKey, number> = {
-        overall: data.monthlyTarget || 0,
-        office: data.office || 0,
-        registration: data.registration || 0,
-        event: data.event || 0,
-      };
-      setTargets(next);
-      setTargetInputs({
-        overall: next.overall ? String(next.overall) : "",
-        office: next.office ? String(next.office) : "",
-        registration: next.registration ? String(next.registration) : "",
-        event: next.event ? String(next.event) : "",
-      });
+      setTargetData(snap.exists() ? (snap.data() as Record<string, number>) : {});
     });
     return () => unsub();
   }, []);
 
+  // 切換時間區間時，輸入框要跟著顯示該區間已存的數字
+  useEffect(() => {
+    const keys: TargetKey[] = ["overall", "office", "registration", "event"];
+    const next = {} as Record<TargetKey, string>;
+    keys.forEach(k => {
+      const v = targetData[targetField(k, timeFilter)] || 0;
+      next[k] = v ? String(v) : "";
+    });
+    setTargetInputs(next);
+  }, [targetData, timeFilter]);
+
   const saveTarget = async (key: TargetKey) => {
+    if (!hasTarget) return;
     const v = Number(targetInputs[key]) || 0;
     setTargetSaving(key);
     try {
-      await setDoc(doc(db, "settings", "targets"), { [TARGET_FIELD_MAP[key]]: v }, { merge: true });
+      await setDoc(doc(db, "settings", "targets"), { [targetField(key, timeFilter)]: v }, { merge: true });
     } finally {
       setTargetSaving(null);
     }
@@ -493,7 +577,7 @@ export default function ProfessionalDashboard() {
     const nowTime = now.getTime();
     
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+    const startOfWeek = startOfMonday(now);
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfQuarter = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
@@ -509,22 +593,24 @@ export default function ProfessionalDashboard() {
       return true;
     };
 
+    // 只納入真正屬於課程或活動的 members，排除辦公室同步過去的客戶主檔，
+    // 否則辦公室業績會在活動那邊被重複計算一次
+    const courseItems = members.filter(m => classifyMember(m) === "質晑所課程");
+    const eventItems = members.filter(m => classifyMember(m) === "活動");
+
     const allProcessed = [
-      ...cases.map(c => ({ ...c, source: '辦公室' })), 
-      ...members.map(m => ({ 
-        ...m, 
-        source: m.productLines?.includes('質晑所課程') ? '質晑所課程' : '活動' 
-      }))
+      ...cases.map(c => ({ ...c, source: '辦公室' })),
+      ...courseItems.map(m => ({ ...m, source: '質晑所課程' })),
+      ...eventItems.map(m => ({ ...m, source: '活動' })),
     ].map(item => ({
       ...item,
       amount: item.totalContractAmount || 0
     }));
 
-    // 💡 修正：改用各產品線正確的「成交/暫停」階段對照表，不再用寫死的 S6/S8
     const isSuccessStage = (item: any) => (SUCCESS_STAGES[item.source] || []).includes(item.stage);
     const isFinalStage = (item: any) => (FINAL_STAGES[item.source] || []).includes(item.stage);
 
-    // 高風險清單：非最終階段停留 >=10天（跟看板紅燈門檻一致，取代舊的 7/3天邏輯）
+    // 高風險清單：非最終階段停留 >=10天（跟看板紅燈門檻一致）
     const fullOverdue = allProcessed.filter(item => {
       if (isFinalStage(item)) return false;
       const stageDate = toJsDate(item.stageStartedAt);
@@ -539,8 +625,8 @@ export default function ProfessionalDashboard() {
     const timeFilteredData = allProcessed.filter(item => checkTime(item.createdAt));
     const activeByTime = timeFilteredData.filter(item => !isFinalStage(item));
 
-    // 💡 修正：業績、成交清單、館別營收，改成看「真正成交的日期」在不在本期間，
-    // 不再看建立日期，不然上個月建立、這個月才成交的案件會被漏算成 $0
+    // 業績、成交清單、館別營收看的是「真正成交的日期」在不在本期間，
+    // 不看建立日期，否則上個月建立、這個月才成交的案件會被漏算
     const finishedByTime = allProcessed.filter(item => isSuccessStage(item) && checkTime(closeDateOf(item)));
 
     const totalRev = finishedByTime.reduce((acc, curr) => acc + curr.amount, 0);
@@ -551,12 +637,10 @@ export default function ProfessionalDashboard() {
     });
 
     const getProductStats = (tag: string) => {
-      // 轉換率：本期間建立的案件中，目前有多少已經成交
       const cohortItems = timeFilteredData.filter(i => i.source === tag);
       const cohortFinished = cohortItems.filter(isSuccessStage);
       const rate = cohortItems.length > 0 ? (cohortFinished.length / cohortItems.length) * 100 : 0;
 
-      // 業績、成交件數：看真正成交日期在不在本期間
       const finished = finishedByTime.filter(i => i.source === tag);
       const rev = finished.reduce((a, c) => a + c.amount, 0);
       return { rev, rate, count: finished.length };
@@ -564,13 +648,30 @@ export default function ProfessionalDashboard() {
 
     const currentRate = timeFilteredData.length > 0 ? (timeFilteredData.filter(isSuccessStage).length / timeFilteredData.length) * 100 : 0;
 
+    // 上一期的轉換率：每個時間篩選都要有對應的完整區間，
+    // 原本本季與今年會落到「上個月」的分支，導致比較基準錯誤
     const getPrevRate = () => {
+      let ps: Date, pe: Date;
+      if (timeFilter === "今日") {
+        pe = startOfDay;
+        ps = new Date(startOfDay.getTime() - 24 * 60 * 60 * 1000);
+      } else if (timeFilter === "本週") {
+        pe = startOfWeek;
+        ps = new Date(startOfWeek.getTime() - 7 * 24 * 60 * 60 * 1000);
+      } else if (timeFilter === "本季") {
+        const q = Math.floor(now.getMonth() / 3) * 3;
+        pe = startOfQuarter;
+        ps = new Date(now.getFullYear(), q - 3, 1);
+      } else if (timeFilter === "今年") {
+        pe = startOfYear;
+        ps = new Date(now.getFullYear() - 1, 0, 1);
+      } else {
+        pe = startOfMonth;
+        ps = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      }
       const prevData = allProcessed.filter(item => {
         const d = toJsDate(item.createdAt);
-        if (!d) return false;
-        if (timeFilter === "今日") return d >= new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1) && d < startOfDay;
-        if (timeFilter === "本週") return d >= new Date(now.getFullYear(), now.getMonth(), now.getDate() - 14) && d < startOfWeek;
-        return d >= new Date(now.getFullYear(), now.getMonth() - 1, 1) && d < startOfMonth;
+        return !!d && d >= ps && d < pe;
       });
       const prevFinished = prevData.filter(isSuccessStage);
       return prevData.length > 0 ? (prevFinished.length / prevData.length) * 100 : 0;
@@ -579,7 +680,7 @@ export default function ProfessionalDashboard() {
     const prevRate = getPrevRate();
     const rateDiff = currentRate - prevRate; 
 
-    // --- 新增①：流程瓶頸分析（各產品線各自一份完整排行，不混在一起） ---
+    // --- 流程瓶頸分析（各產品線各自一份完整排行） ---
     const stageBottleneckBySourceRaw = Object.fromEntries(
       Object.entries(STAGE_DEFS).map(([source, stages]) => {
         const arr = stages
@@ -598,7 +699,7 @@ export default function ProfessionalDashboard() {
       })
     ) as Record<string, { stageId: string; title: string; avg: number; count: number }[]>;
 
-    // --- 新增②：轉換率分析（各產品線成交率 vs 暫停率 vs 進行中率） ---
+    // --- 轉換率分析 ---
     const conversionStatsRaw = Object.keys(STAGE_DEFS).map(source => {
       const items = allProcessed.filter(i => i.source === source);
       const success = items.filter(i => (SUCCESS_STAGES[source] || []).includes(i.stage)).length;
@@ -613,7 +714,7 @@ export default function ProfessionalDashboard() {
       };
     });
 
-    // --- 新增③：暫停原因分析（總覽 + 三條產品線各自一份） ---
+    // --- 暫停原因分析 ---
     const buildPauseReasonStats = (source?: string) => {
       const map = new Map<string, number>();
       allProcessed.forEach(i => {
@@ -631,14 +732,14 @@ export default function ProfessionalDashboard() {
       "活動": buildPauseReasonStats("活動"),
     };
 
-    // --- 新增④：待辦清單完成率（三條產品線分開統計） ---
+    // --- 待辦清單完成率（用正確分類的案件，不再把辦公室客戶算進活動） ---
     const todoStatsBySourceRaw = {
       "辦公室": computeTodoCompletion(cases),
-      "質晑所課程": computeTodoCompletion(members.filter(m => m.productLines?.includes('質晑所課程'))),
-      "活動": computeTodoCompletion(members.filter(m => !m.productLines?.includes('質晑所課程'))),
+      "質晑所課程": computeTodoCompletion(courseItems),
+      "活動": computeTodoCompletion(eventItems),
     };
 
-    // --- 新增⑤：近6個月案件建立趨勢 + 成交業績趨勢（總覽 + 三條產品線各自一份） ---
+    // --- 近6個月案件建立趨勢 + 成交業績趨勢 ---
     const months = last6Months();
     const buildMonthlyTrend = (source?: string) => months.map(m => {
       const newCount = allProcessed.filter(i => (!source || i.source === source) && monthKey(i.createdAt) === m).length;
@@ -654,13 +755,13 @@ export default function ProfessionalDashboard() {
       "活動": buildMonthlyTrend("活動"),
     };
 
-    // --- 新增⑥：本期業績依產品線分類（跟目前選的時間篩選連動） ---
+    // --- 本期業績依產品線分類 ---
     const revenueBySourceRaw = Object.keys(STAGE_DEFS).map(source => {
       const rev = finishedByTime.filter(i => i.source === source).reduce((a, c) => a + c.amount, 0);
       return { source, rev, percentage: totalRev > 0 ? (rev / totalRev) * 100 : 0 };
     });
 
-    // --- 新增⑦：業績成長比較（跟著上方時間篩選走：本期 vs 上一期、本期 vs 去年同期；三條產品線各自獨立計算） ---
+    // --- 業績成長比較 ---
     const revenueInRange = (start: Date, end: Date, source?: string) =>
       allProcessed
         .filter(i => (!source || i.source === source) && isSuccessStage(i))
@@ -670,7 +771,6 @@ export default function ProfessionalDashboard() {
           return sum;
         }, 0);
 
-    // 依目前選的時間篩選，算出「本期」「上一期」「去年同期」的完整日曆區間（不是滑動視窗）
     let curStart: Date, curEnd: Date, prevStart: Date, prevEnd: Date, yoyStart: Date, yoyEnd: Date;
     let prevLabel = "與上期比", yoyLabel = "與去年同期比";
 
@@ -683,7 +783,7 @@ export default function ProfessionalDashboard() {
     } else if (timeFilter === "本週") {
       curStart = startOfWeek; curEnd = new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000);
       prevStart = new Date(startOfWeek.getTime() - 7 * 24 * 60 * 60 * 1000); prevEnd = startOfWeek;
-      yoyStart = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate() - now.getDay());
+      yoyStart = startOfMonday(new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()));
       yoyEnd = new Date(yoyStart.getTime() + 7 * 24 * 60 * 60 * 1000);
       prevLabel = "與上週比"; yoyLabel = "與去年同週比";
     } else if (timeFilter === "本季") {
@@ -691,17 +791,17 @@ export default function ProfessionalDashboard() {
       curStart = startOfQuarter; curEnd = new Date(now.getFullYear(), qStartMonth + 3, 1);
       prevStart = new Date(now.getFullYear(), qStartMonth - 3, 1); prevEnd = curStart;
       yoyStart = new Date(now.getFullYear() - 1, qStartMonth, 1); yoyEnd = new Date(now.getFullYear() - 1, qStartMonth + 3, 1);
-      prevLabel = "與上季比（QoQ）"; yoyLabel = "與去年同季比（YoY）";
+      prevLabel = "與上季比"; yoyLabel = "與去年同季比";
     } else if (timeFilter === "今年") {
       curStart = startOfYear; curEnd = new Date(now.getFullYear() + 1, 0, 1);
       prevStart = new Date(now.getFullYear() - 1, 0, 1); prevEnd = curStart;
       yoyStart = prevStart; yoyEnd = prevEnd;
-      prevLabel = "與去年比（YoY）"; yoyLabel = "與去年比（YoY）";
+      prevLabel = "與去年比"; yoyLabel = "與去年比";
     } else { // 本月（預設）
       curStart = startOfMonth; curEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
       prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1); prevEnd = curStart;
       yoyStart = new Date(now.getFullYear() - 1, now.getMonth(), 1); yoyEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 1);
-      prevLabel = "與上月比（MoM）"; yoyLabel = "與去年同月比（YoY）";
+      prevLabel = "與上月比"; yoyLabel = "與去年同月比";
     }
 
     const buildGrowth = (source?: string) => {
@@ -745,318 +845,406 @@ export default function ProfessionalDashboard() {
     };
   }, [cases, members, timeFilter]);
 
-  if (!hasMounted) return <div className="flex-1 h-screen bg-slate-50/30" />;
+  if (!hasMounted) return <div className="flex-1 h-screen" style={{ backgroundColor: C.page }} />;
   const toggleView = (view: string) => setActiveView(activeView === view ? null : view);
 
+  const officeTotal = officeStats.reduce((a: number, c: any) => a + c.amt, 0);
+
   return (
-    <div className="flex-1 h-screen overflow-y-auto bg-[#F8FAFC] font-sans custom-scrollbar p-12 text-slate-900">
-      <div className="max-w-[1400px] mx-auto space-y-12">
-        <header className="mb-14 flex flex-col lg:flex-row lg:items-center justify-between gap-8 pb-8 border-b border-slate-100">
-          <div className="space-y-3">
-            <div className="flex items-center gap-3"><div className="h-2.5 w-2.5 rounded-full bg-blue-600 animate-pulse" /><span className="text-[11px] font-black text-blue-700 uppercase tracking-[0.2em]">Jade Internal Control System</span></div>
-            <h1 className="text-4xl font-black tracking-tighter text-slate-950">內控指揮中心 Dashboard</h1>
-          </div>
-          <div className="flex bg-white p-2 rounded-2xl shadow-inner border border-slate-100">
+    <div className="flex-1 h-screen overflow-y-auto font-sans custom-scrollbar" style={{ backgroundColor: C.page }}>
+      <div className="max-w-[1280px] mx-auto px-6 py-6 space-y-4">
+        <header className="flex items-center justify-between gap-4 pb-4 border-b border-[#E0DDD6]">
+          <h1 className="text-[18px] font-semibold text-[#1A1A18] tracking-tight">營運總覽</h1>
+          <div className="flex gap-0.5 bg-white p-0.5 rounded-lg border border-[#E8E6E1]">
             {["今日", "本週", "本月", "本季", "今年"].map(t => (
-              <button key={t} onClick={() => setTimeFilter(t)} className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all duration-300 ${timeFilter === t ? "bg-slate-950 text-white shadow-lg" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"}`}>{t}</button>
+              <button
+                key={t}
+                onClick={() => setTimeFilter(t)}
+                className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${
+                  timeFilter === t ? "bg-[#1A1A18] text-white" : "text-[#8A8780] hover:text-[#1A1A18]"
+                }`}
+              >
+                {t}
+              </button>
             ))}
           </div>
         </header>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-          <AnalyticCard title={`成交業績 (${timeFilter})`} value={formatCurrency(analytics.totalRevenue)} subValue={`共 ${revenueList.length} 件`} hint="點擊查看成交清單" onClick={() => toggleView('revenue')} type={activeView === 'revenue' ? 'success' : 'default'} trend="LIVE" />
-          <AnalyticCard title="逾期風險監控" value={analytics.overdueCount} hint="單一階段停留≥10天，全系統彙整" type={analytics.overdueCount > 0 ? "danger" : "default"} trend={analytics.overdueCount > 0 ? "需核閱" : "正常"} trendType={analytics.overdueCount > 0 ? "down" : "up"} onClick={() => toggleView('overdue')} />
-          <AnalyticCard title={`新增在辦案件 (${timeFilter})`} value={analytics.totalActive} hint="點擊查看本期新進案件" onClick={() => toggleView('active')} />
-          <AnalyticCard 
-            title="平均轉換率" 
-            value={`${Math.round(conversionRate)}%`} 
-            hint={`${timeFilter}期結案轉化指標`} 
-            trend={analytics.trendText}  
-            trendType={analytics.trendType} 
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatCard
+            title={`成交業績 · ${timeFilter}`}
+            value={formatCurrency(analytics.totalRevenue)}
+            subValue={`${revenueList.length} 件`}
+            hint="點擊查看成交清單"
+            onClick={() => toggleView('revenue')}
+            active={activeView === 'revenue'}
+          />
+          <StatCard
+            title="逾期風險"
+            value={analytics.overdueCount}
+            hint="單一階段停留滿 10 天，點擊查看清單"
+            tone={analytics.overdueCount > 0 ? "danger" : "default"}
+            onClick={() => toggleView('overdue')}
+            active={activeView === 'overdue'}
+          />
+          <StatCard
+            title={`新增案件 · ${timeFilter}`}
+            value={analytics.totalActive}
+            hint="點擊查看本期新進案件"
+            onClick={() => toggleView('active')}
+            active={activeView === 'active'}
+          />
+          <StatCard
+            title="平均轉換率"
+            value={`${Math.round(conversionRate)}%`}
+            hint="本期建立案件的成交比率"
+            trend={analytics.trendText}
+            trendType={analytics.trendType}
           />
         </div>
 
-        {activeView === 'overdue' && <DetailList title="🔥 全系統高風險案件（單一階段停留≥10天）" list={overdueList} themeColor="red" />}
-        {activeView === 'revenue' && <DetailList title={`💰 本期成交案件明細 (${timeFilter})`} list={revenueList} themeColor="emerald" />}
-        {activeView === 'active' && <DetailList title={`📁 本期新進活躍案件 (${timeFilter})`} list={activeList} themeColor="blue" />}
+        {activeView === 'overdue' && <DetailList title="高風險案件" list={overdueList} />}
+        {activeView === 'revenue' && <DetailList title={`成交案件明細 · ${timeFilter}`} list={revenueList} />}
+        {activeView === 'active' && <DetailList title={`新進案件 · ${timeFilter}`} list={activeList} />}
 
-        <DataSection
-          title={`成交業績依產品線分類 (${timeFilter})`}
-          tag="BY SOURCE"
-          themeColor="blue"
-          description="同一份成交業績，拆成三條產品線各自的貢獻，避免誤把全公司總額當成單一產品線的業績。"
-        >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {revenueBySource.map((r: any, i: number) => (
-              <MetricProgress
-                key={r.source}
-                label={r.source}
-                value={formatCurrency(r.rev)}
-                percentage={r.percentage}
-                colorClass={["bg-blue-600", "bg-emerald-600", "bg-amber-600"][i]}
-              />
-            ))}
-          </div>
-        </DataSection>
+        {/* 業績分類與總目標並排，兩者都是短內容，各佔一整列太浪費 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Panel
+            title={`業績依產品線 · ${timeFilter}`}
+            description="同一份成交業績拆成三條產品線各自的貢獻，避免把全公司總額誤當成單一產品線的表現。"
+          >
+            <div className="space-y-3">
+              {revenueBySource.map((r: any) => (
+                <MetricProgress
+                  key={r.source}
+                  label={r.source}
+                  value={formatCurrency(r.rev)}
+                  percentage={r.percentage}
+                  color={SOURCE_COLOR[r.source]}
+                />
+              ))}
+            </div>
+          </Panel>
 
-        <DataSection
-          title={`業績成長比較 (${timeFilter})`}
-          tag="GROWTH"
-          themeColor="emerald"
-          description="跟著上方時間篩選走：切到本月比較上月/去年同月，切到本季就比較上季/去年同季，以此類推；四組數字各自獨立，不會互相混在一起。"
+          <Panel
+            title={`目標達成率 · ${timeFilter}`}
+            description="週、月、季、年各自設定獨立的目標金額，不做比例換算。切換上方時間區間時，輸入框會顯示該區間已存的數字。這組設定全體共用。"
+          >
+            {hasTarget ? (
+              <>
+                <TargetInput
+                  period={timeFilter}
+                  value={targetInputs.overall}
+                  onChange={(v) => setTargetInputs(prev => ({ ...prev, overall: v }))}
+                  onSave={() => saveTarget("overall")}
+                  saving={targetSaving === "overall"}
+                />
+                <MetricProgress
+                  label={`全公司實際業績 / ${timeFilter}目標`}
+                  value={`${formatCurrency(analytics.totalRevenue)} / ${formatCurrency(targetOf("overall"))}`}
+                  percentage={targetOf("overall") > 0 ? (analytics.totalRevenue / targetOf("overall")) * 100 : 0}
+                  color={C.ink}
+                />
+              </>
+            ) : (
+              <p className="text-[12px] text-[#A5A29B] py-3">
+                「今日」不設定目標，請切換到週、月、季或年檢視達成率。
+              </p>
+            )}
+          </Panel>
+        </div>
+
+        <Panel
+          title={`業績成長比較 · ${timeFilter}`}
+          description="跟著上方時間篩選走：切到本月比較上月與去年同月，切到本季就比較上季與去年同季。四組數字各自獨立計算。"
         >
-          <div className="space-y-10">
-            {[
-              { key: "overall", label: "全公司總計" },
-              { key: "辦公室", label: "辦公室" },
-              { key: "質晑所課程", label: "質晑所課程" },
-              { key: "活動", label: "活動" },
-            ].map(({ key, label }) => {
-              const g = (growthStats as any)[key];
-              return (
-                <div key={key}>
-                  <p className="text-xs font-black text-slate-700 mb-3 pl-1">{label}</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="p-6 bg-slate-50/50 rounded-2xl border border-slate-100">
-                      <p className="text-xs font-black text-slate-500 mb-3">{growthLabels.prevLabel}</p>
-                      <div className="flex items-baseline gap-3 mb-2">
-                        <span className="text-2xl font-black text-slate-900">{formatCurrency(g.currentRevenue)}</span>
-                        <span className={`text-sm font-black ${g.prevGrowth >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left min-w-[520px]">
+              <thead>
+                <tr className="border-b border-[#F0EEE9]">
+                  <th className="pb-2 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase">產品線</th>
+                  <th className="pb-2 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase text-right">本期</th>
+                  <th className="pb-2 pl-4 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase text-right">{growthLabels.prevLabel}</th>
+                  <th className="pb-2 pl-4 text-[10px] font-semibold text-[#A5A29B] tracking-[0.1em] uppercase text-right">{growthLabels.yoyLabel}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { key: "overall", label: "全公司總計" },
+                  { key: "辦公室", label: "辦公室" },
+                  { key: "質晑所課程", label: "質晑所課程" },
+                  { key: "活動", label: "活動" },
+                ].map(({ key, label }) => {
+                  const g = (growthStats as any)[key];
+                  return (
+                    <tr key={key} className="border-t border-[#F0EEE9]">
+                      <td className="py-2.5 text-[12px] text-[#3A3833]">{label}</td>
+                      <td className="py-2.5 text-[13px] text-[#1A1A18] tabular-nums text-right">
+                        {formatCurrency(g.currentRevenue)}
+                      </td>
+                      <td className="py-2.5 pl-4 text-right">
+                        <div className="text-[12px] tabular-nums" style={{ color: g.prevGrowth >= 0 ? C.success : C.danger }}>
                           {g.prevGrowth >= 0 ? "↑" : "↓"} {Math.abs(g.prevGrowth).toFixed(1)}%
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-400">上一期：{formatCurrency(g.prevRevenue)}</p>
-                    </div>
-                    <div className="p-6 bg-slate-50/50 rounded-2xl border border-slate-100">
-                      <p className="text-xs font-black text-slate-500 mb-3">{growthLabels.yoyLabel}</p>
-                      <div className="flex items-baseline gap-3 mb-2">
-                        <span className="text-2xl font-black text-slate-900">{formatCurrency(g.currentRevenue)}</span>
-                        <span className={`text-sm font-black ${g.yoyGrowth >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                        </div>
+                        <div className="text-[10px] text-[#B0ADA6] tabular-nums">{formatCurrency(g.prevRevenue)}</div>
+                      </td>
+                      <td className="py-2.5 pl-4 text-right">
+                        <div className="text-[12px] tabular-nums" style={{ color: g.yoyGrowth >= 0 ? C.success : C.danger }}>
                           {g.yoyGrowth >= 0 ? "↑" : "↓"} {Math.abs(g.yoyGrowth).toFixed(1)}%
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-400">去年同期：{formatCurrency(g.yoyRevenue)}</p>
-                    </div>
-                  </div>
-                </div>
+                        </div>
+                        <div className="text-[10px] text-[#B0ADA6] tabular-nums">{formatCurrency(g.yoyRevenue)}</div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        <Panel
+          title={`辦公室館別營收 · ${timeFilter}`}
+          description="看各館別對辦公室產品線的營收貢獻比重，決定招租資源投放的優先順序。"
+        >
+          {hasTarget && (
+            <>
+              <TargetInput
+                period={timeFilter}
+                value={targetInputs.office}
+                onChange={(v) => setTargetInputs(prev => ({ ...prev, office: v }))}
+                onSave={() => saveTarget("office")}
+                saving={targetSaving === "office"}
+              />
+              <div className="mb-4 pb-4 border-b border-[#F0EEE9]">
+                <MetricProgress
+                  label={`辦公室業績 / ${timeFilter}目標`}
+                  value={`${formatCurrency(officeTotal)} / ${formatCurrency(targetOf("office"))}`}
+                  percentage={targetOf("office") > 0 ? (officeTotal / targetOf("office")) * 100 : 0}
+                  color={C.office}
+                />
+              </div>
+            </>
+          )}
+          {/* 館別的百分比以目標為分母，五條加總即為總達成率；
+              「佔辦公室業績的比重」上方的產品線區塊已經呈現過，這裡不重複 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3">
+            {officeStats.map((s: any) => {
+              const denominator = hasTarget && targetOf("office") > 0 ? targetOf("office") : officeTotal;
+              return (
+                <MetricProgress
+                  key={s.name}
+                  label={s.name}
+                  value={formatCurrency(s.amt)}
+                  percentage={denominator > 0 ? (s.amt / denominator) * 100 : 0}
+                  color={C.office}
+                />
               );
             })}
           </div>
-        </DataSection>
+        </Panel>
 
-        <div className="space-y-12">
-          <DataSection title={`辦公室租賃館別營收貢獻 (${timeFilter})`} tag="OFFICE LINE" themeColor="blue" description="看各館別對辦公室產品線總營收的貢獻比重，掌握哪個館別最賺錢，決定招租資源投放的優先順序；下方另可設定本月目標，檢視五個館別加總後是否達標。">
-            <TargetInput
-              value={targetInputs.office}
-              onChange={(v) => setTargetInputs(prev => ({ ...prev, office: v }))}
-              onSave={() => saveTarget("office")}
-              saving={targetSaving === "office"}
-            />
-            <MetricProgress
-              label={`辦公室${timeFilter}業績 / 目標`}
-              value={`${formatCurrency(officeStats.reduce((a, c) => a + c.amt, 0))} / ${formatCurrency(scaleTarget(targets.office))}`}
-              percentage={targets.office > 0 ? (officeStats.reduce((a, c) => a + c.amt, 0) / scaleTarget(targets.office)) * 100 : 0}
-              colorClass="bg-blue-600"
-            />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8 mt-8">
-              {officeStats.map((s, i) => {
-                const officeTotal = officeStats.reduce((a, c) => a + c.amt, 0);
-                return (
-                  <MetricProgress key={s.name} label={s.name} value={formatCurrency(s.amt)} percentage={officeTotal > 0 ? (s.amt / officeTotal) * 100 : 0} colorClass={["bg-blue-600","bg-indigo-500","bg-purple-500","bg-violet-500","bg-sky-500"][i]} />
-                );
-              })}
-            </div>
-          </DataSection>
-
-          <DataSection title="質晑所課程績效指標" tag="REGISTRATION" themeColor="emerald" description="追蹤課程產品線的業績與成交轉換率，評估這條產品線目前的健康度與成長狀況；可設定本月目標檢視達成率。">
-            <TargetInput
-              value={targetInputs.registration}
-              onChange={(v) => setTargetInputs(prev => ({ ...prev, registration: v }))}
-              onSave={() => saveTarget("registration")}
-              saving={targetSaving === "registration"}
-            />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
-              <div className="space-y-8">
-                <MetricProgress label={`${timeFilter}成交業績 / 目標`} value={`${formatCurrency(regStats.rev)} / ${formatCurrency(scaleTarget(targets.registration))}`} percentage={targets.registration > 0 ? (regStats.rev / scaleTarget(targets.registration)) * 100 : 0} colorClass="bg-emerald-600" />
-                <MetricProgress label={`${timeFilter}成交轉換率`} value={`${Math.round(regStats.rate)}%`} percentage={regStats.rate} colorClass="bg-emerald-500" />
-              </div>
-              <div className="p-8 bg-emerald-50/50 rounded-3xl border border-emerald-100 shadow-inner flex flex-col items-center justify-center h-full min-h-[220px]">
-                <p className="text-xs font-bold text-emerald-800/70 uppercase mb-3 tracking-wider">{timeFilter}成交件數</p>
-                <div className="text-6xl font-black text-emerald-700">{regStats.count} <span className="text-base font-medium text-emerald-500/80">件</span></div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Panel title="質晑所課程" description="追蹤課程產品線的業績與成交轉換率。">
+            {hasTarget && (
+              <TargetInput
+                period={timeFilter}
+                value={targetInputs.registration}
+                onChange={(v) => setTargetInputs(prev => ({ ...prev, registration: v }))}
+                onSave={() => saveTarget("registration")}
+                saving={targetSaving === "registration"}
+              />
+            )}
+            <div className="space-y-3">
+              {hasTarget && (
+                <MetricProgress
+                  label={`業績 / ${timeFilter}目標`}
+                  value={`${formatCurrency(regStats.rev)} / ${formatCurrency(targetOf("registration"))}`}
+                  percentage={targetOf("registration") > 0 ? (regStats.rev / targetOf("registration")) * 100 : 0}
+                  color={C.course}
+                />
+              )}
+              <MetricProgress
+                label="成交轉換率"
+                value={`${Math.round(regStats.rate)}%`}
+                percentage={regStats.rate}
+                color={C.course}
+              />
+              <div className="pt-2.5 border-t border-[#F0EEE9] flex items-baseline justify-between">
+                <span className="text-[12px] text-[#8A8780]">成交件數</span>
+                <span className="text-[16px] font-semibold tabular-nums" style={{ color: C.course }}>
+                  {regStats.count}
+                </span>
               </div>
             </div>
-          </DataSection>
+          </Panel>
 
-          <DataSection title="活動管理績效指標" tag="EVENT SPACE" themeColor="amber" description="追蹤活動產品線的業績與成交轉換率，評估活動業務的表現與資源投入是否對等；可設定本月目標檢視達成率。">
-            <TargetInput
-              value={targetInputs.event}
-              onChange={(v) => setTargetInputs(prev => ({ ...prev, event: v }))}
-              onSave={() => saveTarget("event")}
-              saving={targetSaving === "event"}
-            />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
-              <div className="space-y-8">
-                <MetricProgress label={`${timeFilter}成交業績 / 目標`} value={`${formatCurrency(eventStats.rev)} / ${formatCurrency(scaleTarget(targets.event))}`} percentage={targets.event > 0 ? (eventStats.rev / scaleTarget(targets.event)) * 100 : 0} colorClass="bg-amber-600" />
-                <MetricProgress label={`${timeFilter}成交轉換率`} value={`${Math.round(eventStats.rate)}%`} percentage={eventStats.rate} colorClass="bg-amber-500" />
-              </div>
-              <div className="p-8 bg-amber-50/50 rounded-3xl border border-amber-100 shadow-inner flex flex-col items-center justify-center h-full min-h-[220px]">
-                <p className="text-xs font-bold text-amber-800/70 uppercase mb-3 tracking-wider">{timeFilter}成交件數</p>
-                <div className="text-6xl font-black text-amber-700">{eventStats.count} <span className="text-base font-medium text-amber-500/80">件</span></div>
+          <Panel title="活動管理" description="追蹤活動產品線的業績與成交轉換率。">
+            {hasTarget && (
+              <TargetInput
+                period={timeFilter}
+                value={targetInputs.event}
+                onChange={(v) => setTargetInputs(prev => ({ ...prev, event: v }))}
+                onSave={() => saveTarget("event")}
+                saving={targetSaving === "event"}
+              />
+            )}
+            <div className="space-y-3">
+              {hasTarget && (
+                <MetricProgress
+                  label={`業績 / ${timeFilter}目標`}
+                  value={`${formatCurrency(eventStats.rev)} / ${formatCurrency(targetOf("event"))}`}
+                  percentage={targetOf("event") > 0 ? (eventStats.rev / targetOf("event")) * 100 : 0}
+                  color={C.event}
+                />
+              )}
+              <MetricProgress
+                label="成交轉換率"
+                value={`${Math.round(eventStats.rate)}%`}
+                percentage={eventStats.rate}
+                color={C.event}
+              />
+              <div className="pt-2.5 border-t border-[#F0EEE9] flex items-baseline justify-between">
+                <span className="text-[12px] text-[#8A8780]">成交件數</span>
+                <span className="text-[16px] font-semibold tabular-nums" style={{ color: C.event }}>
+                  {eventStats.count}
+                </span>
               </div>
             </div>
-          </DataSection>
+          </Panel>
+        </div>
 
-          {/* 💡 新增①：業績目標達成率（全公司總計） */}
-          <DataSection
-            title={`${timeFilter}業績目標達成率（全公司總計）`}
-            tag="TARGET"
-            themeColor="blue"
-            description="設定「每月」目標金額，切換上方時間篩選時，目標會依比例自動換算（例如本季＝月目標×3），跟實際業績維持同一個比較基準；這組數字全體同事共用同一份，任何人修改後大家看到的都會一致。"
+        <Panel
+          title="近 6 個月趨勢"
+          description="觀察案件量與業績的長期走勢，判斷業務動能是成長還是衰退。切換頁籤可分別檢視各產品線，避免不同量級互相干擾。"
+        >
+          <TabRow
+            tabs={[
+              { key: "overall", label: "總覽" },
+              { key: "辦公室", label: "辦公室" },
+              { key: "質晑所課程", label: "質晑所課程" },
+              { key: "活動", label: "活動" },
+            ]}
+            value={trendTab}
+            onChange={setTrendTab}
+          />
+          <TrendComboChart data={monthlyTrendBySource[trendTab]} />
+        </Panel>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Panel
+            title="流程瓶頸 · 平均停留天數"
+            description="找出平均停留天數最長的階段，優先檢討這些卡關步驟。每條產品線的階段與天數量級不同，分開檢視才不會互相干擾。"
           >
-            <TargetInput
-              value={targetInputs.overall}
-              onChange={(v) => setTargetInputs(prev => ({ ...prev, overall: v }))}
-              onSave={() => saveTarget("overall")}
-              saving={targetSaving === "overall"}
-            />
-            <MetricProgress
-              label={`${timeFilter}實際業績 / 目標`}
-              value={`${formatCurrency(analytics.totalRevenue)} / ${formatCurrency(scaleTarget(targets.overall))}`}
-              percentage={targets.overall > 0 ? (analytics.totalRevenue / scaleTarget(targets.overall)) * 100 : 0}
-              colorClass="bg-blue-600"
-            />
-          </DataSection>
-
-          {/* 💡 新增②：近6個月趨勢（總覽 + 三條產品線頁籤） */}
-          <DataSection
-            title="近6個月案件建立與業績趨勢"
-            tag="TREND"
-            themeColor="blue"
-            description="觀察案件量與業績的長期走勢，判斷業務動能是成長還是衰退；可切換頁籤分別檢視各產品線，避免不同量級的數字互相干擾。"
-          >
-            <div className="flex gap-2 mb-6">
-              {([
-                { key: "overall", label: "總覽" },
+            <TabRow
+              tabs={[
                 { key: "辦公室", label: "辦公室" },
-                { key: "質晑所課程", label: "質晑所課程" },
+                { key: "質晑所課程", label: "課程" },
                 { key: "活動", label: "活動" },
-              ] as const).map(t => (
-                <button
-                  key={t.key}
-                  onClick={() => setTrendTab(t.key)}
-                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${trendTab === t.key ? "bg-slate-950 text-white shadow-md" : "text-slate-400 bg-slate-50 hover:text-slate-600"}`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-            <TrendComboChart data={monthlyTrendBySource[trendTab]} />
-          </DataSection>
-
-          {/* 💡 新增③：流程瓶頸分析（三個頁籤，各產品線各自完整排行） */}
-          <DataSection
-            title="流程瓶頸分析（各階段平均停留天數）"
-            tag="BOTTLENECK"
-            themeColor="amber"
-            description="找出流程中平均停留天數最長的階段，優先檢討這些卡關步驟，加速整體成交速度；每條產品線的階段跟天數量級不同，分開看才不會互相干擾。"
-          >
-            <div className="flex gap-2 mb-6">
-              {(["辦公室", "質晑所課程", "活動"] as const).map(s => (
-                <button
-                  key={s}
-                  onClick={() => setBottleneckTab(s)}
-                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${bottleneckTab === s ? "bg-slate-950 text-white shadow-md" : "text-slate-400 bg-slate-50 hover:text-slate-600"}`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
+              ]}
+              value={bottleneckTab}
+              onChange={setBottleneckTab}
+            />
             <HorizontalBarChart
-              data={stageBottleneckBySource[bottleneckTab].map(s => ({ label: s.title, value: s.avg }))}
-              color="#f59e0b"
+              data={stageBottleneckBySource[bottleneckTab].map(s => ({
+                label: s.title.length > 14 ? s.title.slice(0, 14) + "…" : s.title,
+                value: s.avg,
+              }))}
+              color={C.warn}
               unit=" 天"
             />
-          </DataSection>
+          </Panel>
 
-          {/* 💡 新增④：轉換率分析 */}
-          <DataSection
-            title="轉換率分析（成交 vs 暫停）"
-            tag="CONVERSION"
-            themeColor="emerald"
+          <Panel
+            title="待辦完成率"
+            description="檢視 SOP 執行狀況，完成率最低的排在最上面。長條顯示的是完成百分比，滑鼠移上去可看到數值。"
+          >
+            <TabRow
+              tabs={[
+                { key: "辦公室", label: "辦公室" },
+                { key: "質晑所課程", label: "課程" },
+                { key: "活動", label: "活動" },
+              ]}
+              value={todoTab}
+              onChange={setTodoTab}
+            />
+            {/* 改用完成率而非完成件數：排序依據是完成率，若長條畫的是件數，
+                2/2（100%）會比 3/10（30%）看起來更短，與標題的判讀方向相反 */}
+            <HorizontalBarChart
+              data={todoStatsBySource[todoTab].map(t => ({
+                label: t.text.length > 14 ? t.text.slice(0, 14) + "…" : t.text,
+                value: Math.round(t.rate),
+              }))}
+              color={SOURCE_COLOR[todoTab]}
+              unit=" %"
+              tickStep={20}
+            />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Panel
+            title="轉換率 · 成交與暫停"
             description="比較各產品線的成交率與暫停率，評估哪條產品線的業務健康度較高、哪條需要關注。"
           >
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {conversionStats.map(c => (
-                <div key={c.source} className="p-6 bg-slate-50/50 rounded-2xl border border-slate-100">
-                  <p className="text-xs font-black text-slate-500 mb-2 text-center">{c.source}（共 {c.total} 件）</p>
-                  <ConversionDonut success={c.success} paused={c.paused} total={c.total} />
-                  <div className="mt-4 space-y-1.5 text-[11px] font-bold">
-                    <div className="flex justify-between text-emerald-600"><span>成交率</span><span>{c.successRate.toFixed(1)}%（{c.success} 件）</span></div>
-                    <div className="flex justify-between text-red-500"><span>暫停率</span><span>{c.pausedRate.toFixed(1)}%（{c.paused} 件）</span></div>
-                    <div className="flex justify-between text-slate-400"><span>進行中</span><span>{c.activeRate.toFixed(1)}%（{c.active} 件）</span></div>
+            <div className="space-y-3">
+              {conversionStats.map((c: any) => (
+                <div key={c.source} className="flex items-center gap-3">
+                  <span className="text-[12px] text-[#3A3833] w-20 shrink-0">{c.source}</span>
+                  <div className="flex-1 h-2 rounded-full overflow-hidden flex bg-[#F0EEE9]">
+                    {c.total > 0 && (
+                      <>
+                        <div style={{ width: `${c.successRate}%`, backgroundColor: C.success }} />
+                        <div style={{ width: `${c.pausedRate}%`, backgroundColor: C.danger }} />
+                      </>
+                    )}
                   </div>
+                  <span className="text-[11px] tabular-nums text-[#8A8780] w-28 text-right shrink-0">
+                    成交 {c.successRate.toFixed(0)}% · {c.total} 件
+                  </span>
                 </div>
               ))}
+              <div className="pt-2.5 border-t border-[#F0EEE9] flex gap-4 text-[10px]">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: C.success }} />
+                  <span className="text-[#8A8780]">成交</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: C.danger }} />
+                  <span className="text-[#8A8780]">暫停</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[#F0EEE9]" />
+                  <span className="text-[#8A8780]">進行中</span>
+                </span>
+              </div>
             </div>
-          </DataSection>
+          </Panel>
 
-          {/* 💡 新增⑤：暫停原因分析（總覽 + 三個頁籤） */}
-          <DataSection
-            title="暫停原因分析"
-            tag="PAUSE REASON"
-            themeColor="amber"
-            description="統計案件暫停的真正原因，找出重複出現的業務痛點，作為改善銷售策略或報價機制的依據；可切換頁籤看跨產品線彙整或單一產品線細節。"
+          <Panel
+            title="暫停原因"
+            description="統計案件暫停的真正原因，找出重複出現的業務痛點，作為改善銷售策略或報價機制的依據。"
           >
-            <div className="flex gap-2 mb-6">
-              {([
+            <TabRow
+              tabs={[
                 { key: "overall", label: "總覽" },
                 { key: "辦公室", label: "辦公室" },
-                { key: "質晑所課程", label: "質晑所課程" },
+                { key: "質晑所課程", label: "課程" },
                 { key: "活動", label: "活動" },
-              ] as const).map(t => (
-                <button
-                  key={t.key}
-                  onClick={() => setPauseReasonTab(t.key)}
-                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${pauseReasonTab === t.key ? "bg-slate-950 text-white shadow-md" : "text-slate-400 bg-slate-50 hover:text-slate-600"}`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+              ]}
+              value={pauseReasonTab}
+              onChange={setPauseReasonTab}
+            />
             <HorizontalBarChart
               data={pauseReasonStatsBySource[pauseReasonTab].map(p => ({ label: p.reason, value: p.count }))}
-              color="#ef4444"
+              color={C.danger}
               unit=" 件"
+              tickStep={1}
             />
-          </DataSection>
-
-          {/* 💡 新增⑥：待辦清單完成率（三個頁籤） */}
-          <DataSection
-            title="待辦清單完成率（找出常被漏掉的步驟）"
-            tag="TODO CHECK"
-            themeColor="blue"
-            description="檢視 SOP 執行狀況，找出最常被漏掉的步驟，補強教育訓練或流程設計，避免服務品質不一致。由低到高排序，完成率最低的排在最前面。"
-          >
-            <div className="flex gap-2 mb-6">
-              {(["辦公室", "質晑所課程", "活動"] as const).map(s => (
-                <button
-                  key={s}
-                  onClick={() => setTodoTab(s)}
-                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${todoTab === s ? "bg-slate-950 text-white shadow-md" : "text-slate-400 bg-slate-50 hover:text-slate-600"}`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-            <HorizontalBarChart
-              data={todoStatsBySource[todoTab].map(t => ({ label: t.text, value: t.completed }))}
-              color={todoTab === "辦公室" ? "#3b82f6" : todoTab === "質晑所課程" ? "#10b981" : "#f59e0b"}
-              unit=" 件完成"
-            />
-          </DataSection>
+          </Panel>
         </div>
       </div>
-      <style dangerouslySetInnerHTML={{ __html: `.custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; } .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }` }} />
+
+      <style dangerouslySetInnerHTML={{ __html: `.custom-scrollbar::-webkit-scrollbar { width: 6px; height: 10px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #D5D2CB; border-radius: 999px; } .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #B0ADA6; }` }} />
     </div>
   );
 }

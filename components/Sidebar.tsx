@@ -175,12 +175,14 @@ export default function Sidebar() {
   };
 
   return (
+    // sticky + h-screen：頁面內容捲動時側邊欄固定在左側，
+    // 且仍留在 flex 佈局內，收合時主內容區寬度會自動跟著調整
     <aside
-      className={`min-h-screen bg-slate-900 text-white shrink-0 flex flex-col font-sans transition-all duration-200 ${
+      className={`sticky top-0 h-screen bg-slate-900 text-white shrink-0 flex flex-col font-sans transition-all duration-200 ${
         collapsed ? "w-20" : "w-64"
       }`}
     >
-      <div className={`py-10 relative ${collapsed ? "px-3" : "px-6"}`}>
+      <div className={`py-10 relative shrink-0 ${collapsed ? "px-3" : "px-6"}`}>
         {/* 收合/展開切換按鈕，浮貼在側邊欄右側邊緣 */}
         <button
           onClick={toggle}
@@ -215,7 +217,8 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className={`flex-1 space-y-1 ${collapsed ? "px-2" : "px-4"}`}>
+      {/* 選單項目多時自行捲動，不會把登出區推出畫面 */}
+      <nav className={`flex-1 min-h-0 overflow-y-auto sidebar-scroll space-y-1 ${collapsed ? "px-2" : "px-4"}`}>
         {!collapsed && (
           <div className="mb-4 px-2 text-[10px] font-bold text-slate-600 uppercase tracking-widest">
             MAIN MENU
@@ -275,9 +278,10 @@ export default function Sidebar() {
             })}
           </>
         )}
+        <div className="h-4" />
       </nav>
 
-      <div className={`border-t border-slate-800 ${collapsed ? "p-2" : "p-4"}`}>
+      <div className={`border-t border-slate-800 shrink-0 ${collapsed ? "p-2" : "p-4"}`}>
         <button
           onClick={handleLogout}
           title={collapsed ? "登出系統" : undefined}
@@ -308,6 +312,22 @@ export default function Sidebar() {
           </div>
         )}
       </div>
+
+      <style jsx global>{`
+        .sidebar-scroll::-webkit-scrollbar {
+          width: 4px;
+        }
+        .sidebar-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .sidebar-scroll::-webkit-scrollbar-thumb {
+          background: #334155;
+          border-radius: 999px;
+        }
+        .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+          background: #475569;
+        }
+      `}</style>
     </aside>
   );
 }

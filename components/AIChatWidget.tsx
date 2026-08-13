@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { AiChatResponse, AiProposal, AiRecord, AI_COLLECTION_LABELS } from "@/lib/ai-assistant";
 
@@ -11,16 +11,18 @@ type Message = {
   proposal?: AiProposal;
 };
 
+const DOCK_KEY = "ai-widget-docked";
+
 function FieldPreview({ data }: { data: Record<string, unknown> }) {
   const preview = Object.entries(data)
     .filter(([, value]) => value !== "" && value !== undefined && value !== null)
     .slice(0, 4);
 
   return (
-    <dl className="mt-2 space-y-1 text-[11px] text-slate-500">
+    <dl className="mt-2 space-y-1 text-[11px] text-[#8A8780]">
       {preview.map(([key, value]) => (
         <div key={key} className="flex gap-2">
-          <dt className="w-20 shrink-0 font-bold text-slate-400">{key}</dt>
+          <dt className="w-20 shrink-0 text-[#B0ADA6]">{key}</dt>
           <dd className="min-w-0 flex-1 truncate">
             {Array.isArray(value) ? value.join("、") : String(value)}
           </dd>
@@ -40,15 +42,15 @@ function ProposalCard({
   applying: boolean;
 }) {
   return (
-    <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-slate-700">
-      <p className="text-xs font-black text-amber-700">待確認修改</p>
-      <h4 className="mt-1 text-sm font-black">{proposal.title}</h4>
-      <p className="mt-1 text-xs leading-relaxed text-slate-500">{proposal.reason}</p>
-      <div className="mt-3 rounded-xl bg-white/80 p-2 text-[11px]">
-        <p className="font-bold text-slate-400">
+    <div className="mt-3 rounded-lg border border-[#E8DCC0] bg-[#FAF6EC] p-3">
+      <p className="text-[10px] font-semibold tracking-[0.1em] uppercase text-[#A97B22]">待確認修改</p>
+      <h4 className="mt-1.5 text-[13px] font-semibold text-[#1A1A18]">{proposal.title}</h4>
+      <p className="mt-1 text-[11px] leading-relaxed text-[#8A8780]">{proposal.reason}</p>
+      <div className="mt-3 rounded-md bg-white/80 border border-[#EFE7D5] p-2.5 text-[11px]">
+        <p className="text-[#B0ADA6]">
           {AI_COLLECTION_LABELS[proposal.collection]} / {proposal.id}
         </p>
-        <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words text-slate-600">
+        <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[#5F5E5A] leading-relaxed">
           {JSON.stringify(proposal.patch, null, 2)}
         </pre>
       </div>
@@ -56,9 +58,9 @@ function ProposalCard({
         type="button"
         onClick={() => onApply(proposal)}
         disabled={applying}
-        className="mt-3 w-full rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+        className="mt-3 w-full rounded-lg bg-[#1A1A18] px-3 py-2 text-[12px] font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {applying ? "寫入中..." : "確認修改資料"}
+        {applying ? "寫入中…" : "確認修改資料"}
       </button>
     </div>
   );
@@ -67,6 +69,9 @@ function ProposalCard({
 export default function AIChatWidget() {
   const { user, profile } = useAuth();
   const [open, setOpen] = useState(false);
+  // 完全收到畫面邊緣，只留一小條可以拉回來。狀態記在 localStorage，重整後維持
+  const [docked, setDocked] = useState(false);
+  const [hovering, setHovering] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -78,6 +83,23 @@ export default function AIChatWidget() {
     },
   ]);
   const listRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    try {
+      setDocked(localStorage.getItem(DOCK_KEY) === "1");
+    } catch {
+      // 隱私模式等情境讀不到 localStorage，維持預設展開即可
+    }
+  }, []);
+
+  const setDockedPersist = (v: boolean) => {
+    setDocked(v);
+    try {
+      localStorage.setItem(DOCK_KEY, v ? "1" : "0");
+    } catch {
+      // 寫入失敗不影響當次操作
+    }
+  };
 
   const chatHistory = useMemo(
     () => messages.map(({ role, content }) => ({ role, content })),
@@ -162,35 +184,49 @@ export default function AIChatWidget() {
     }
   };
 
+  /* --- 收到邊緣的狀態：只留一條窄把手 --- */
+  if (docked && !open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setDockedPersist(false)}
+        title="顯示 AI 資料助理"
+        className="fixed right-0 bottom-24 z-[120] font-sans w-5 h-16 rounded-l-lg bg-[#1A1A18]/70 hover:bg-[#1A1A18] text-white text-[9px] tracking-widest transition-all flex items-center justify-center"
+      >
+        <span className="[writing-mode:vertical-rl]">AI</span>
+      </button>
+    );
+  }
+
   return (
-    <div className="fixed bottom-5 right-5 z-[120] font-sans">
+    <div className="fixed bottom-5 right-5 z-[120] font-sans flex flex-col items-end">
       {open && (
-        <section className="mb-4 flex h-[min(680px,calc(100vh-120px))] w-[min(420px,calc(100vw-40px))] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/20">
-          <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+        <section className="mb-3 flex h-[min(660px,calc(100vh-120px))] w-[min(400px,calc(100vw-40px))] flex-col overflow-hidden rounded-xl border border-[#E0DDD6] bg-white shadow-[0_12px_40px_rgba(0,0,0,0.14)]">
+          <header className="flex items-center justify-between border-b border-[#E8E6E1] px-5 py-3.5">
             <div>
-              <h3 className="text-sm font-black text-slate-900">AI 資料助理</h3>
-              <p className="text-[11px] font-bold text-slate-400">查資料、整理重點、提出修改提案</p>
+              <h3 className="text-[13px] font-semibold text-[#1A1A18]">AI 資料助理</h3>
+              <p className="text-[11px] text-[#A5A29B] mt-0.5">查資料、整理重點、提出修改提案</p>
             </div>
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="rounded-full px-2 py-1 text-sm font-black text-slate-400 hover:bg-slate-100"
+              className="w-7 h-7 rounded-md flex items-center justify-center text-[#A5A29B] hover:bg-[#F5F4F1] hover:text-[#1A1A18] transition-colors"
             >
-              x
+              ✕
             </button>
           </header>
 
-          <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto bg-slate-50/80 p-4">
+          <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto bg-[#FAFAF8] p-4">
             {messages.map((message, index) => (
               <div
                 key={`${message.role}-${index}`}
                 className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
+                  className={`max-w-[88%] rounded-lg px-3.5 py-2.5 text-[13px] leading-relaxed ${
                     message.role === "user"
-                      ? "bg-slate-900 text-white"
-                      : "border border-slate-100 bg-white text-slate-700"
+                      ? "bg-[#1A1A18] text-white"
+                      : "border border-[#E8E6E1] bg-white text-[#3A3833]"
                   }`}
                 >
                   <p className="whitespace-pre-wrap">{message.content}</p>
@@ -198,8 +234,8 @@ export default function AIChatWidget() {
                   {!!message.records?.length && (
                     <div className="mt-3 space-y-2">
                       {message.records.map((record) => (
-                        <div key={`${record.collection}-${record.id}`} className="rounded-2xl bg-slate-50 p-3">
-                          <p className="text-[11px] font-black text-slate-400">
+                        <div key={`${record.collection}-${record.id}`} className="rounded-lg bg-[#FAFAF8] border border-[#F0EEE9] p-3">
+                          <p className="text-[10px] text-[#B0ADA6]">
                             {AI_COLLECTION_LABELS[record.collection]} / {record.id}
                           </p>
                           <FieldPreview data={record.data} />
@@ -220,19 +256,19 @@ export default function AIChatWidget() {
             ))}
 
             {loading && (
-              <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3 text-sm font-bold text-slate-400 shadow-sm">
-                AI 正在整理資料...
+              <div className="rounded-lg border border-[#E8E6E1] bg-white px-3.5 py-2.5 text-[12px] text-[#A5A29B]">
+                整理資料中…
               </div>
             )}
             {error && (
-              <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-600">
+              <div className="rounded-lg border border-[#EBD3CE] bg-[#FBF2F0] px-3.5 py-2.5 text-[12px] text-[#B4483C]">
                 {error}
               </div>
             )}
           </div>
 
           <form
-            className="border-t border-slate-100 bg-white p-4"
+            className="border-t border-[#E8E6E1] bg-white p-3.5"
             onSubmit={(event) => {
               event.preventDefault();
               callAi();
@@ -249,14 +285,14 @@ export default function AIChatWidget() {
               }}
               rows={3}
               placeholder="例如：幫我找承租中的客戶，或把某某公司的狀態改成已退租"
-              className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:bg-white"
+              className="w-full resize-none rounded-lg border border-[#E8E6E1] bg-[#FAFAF8] px-3.5 py-2.5 text-[13px] outline-none transition focus:border-[#B0ADA6] focus:bg-white text-[#1A1A18] placeholder:text-[#C4C1B9] leading-relaxed"
             />
-            <div className="mt-3 flex items-center justify-between">
-              <p className="text-[11px] font-bold text-slate-400">Enter 送出，Shift+Enter 換行</p>
+            <div className="mt-2.5 flex items-center justify-between">
+              <p className="text-[10px] text-[#B0ADA6]">Enter 送出，Shift+Enter 換行</p>
               <button
                 type="submit"
                 disabled={loading || !input.trim()}
-                className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-black text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                className="rounded-lg bg-[#1A1A18] px-4 py-2 text-[12px] font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#D5D2CB]"
               >
                 送出
               </button>
@@ -265,14 +301,36 @@ export default function AIChatWidget() {
         </section>
       )}
 
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="flex h-14 items-center gap-3 rounded-full bg-slate-900 px-5 text-sm font-black text-white shadow-2xl shadow-slate-900/30 transition hover:-translate-y-0.5 hover:bg-indigo-600"
+      {/* 收合時只佔一顆小圓鈕，滑鼠移上去才展開文字，避免長期擋住頁面右下角內容 */}
+      <div
+        className="flex items-center gap-1.5"
+        onMouseEnter={() => setHovering(true)}
+        onMouseLeave={() => setHovering(false)}
       >
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-white/10">AI</span>
-        <span>{open ? "收合助理" : "AI 資料助理"}</span>
-      </button>
+        {!open && hovering && (
+          <button
+            type="button"
+            onClick={() => setDockedPersist(true)}
+            title="收到畫面邊緣"
+            className="h-8 px-2.5 rounded-lg bg-white border border-[#E0DDD6] text-[11px] text-[#8A8780] hover:text-[#1A1A18] hover:border-[#B0ADA6] transition-all shadow-sm"
+          >
+            收起
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          title="AI 資料助理"
+          className={`h-12 rounded-full bg-[#1A1A18] text-[13px] font-medium text-white shadow-[0_4px_16px_rgba(0,0,0,0.18)] transition-all hover:bg-black flex items-center justify-center overflow-hidden ${
+            open || hovering ? "px-5 gap-2.5" : "w-12"
+          }`}
+        >
+          <span className="text-[11px] tracking-wider shrink-0">AI</span>
+          {(open || hovering) && (
+            <span className="whitespace-nowrap">{open ? "收合" : "資料助理"}</span>
+          )}
+        </button>
+      </div>
     </div>
   );
 }

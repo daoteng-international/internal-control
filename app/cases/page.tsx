@@ -21,6 +21,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { db, auth} from "@/lib/firebase";
 import { uploadCaseAttachment, deleteByUrl, deleteManyByUrl } from "@/lib/storage-upload";
+import { Room, Floor, ROOM_STATUS_LABEL } from "@/lib/types/room";
 import { onAuthStateChanged } from "firebase/auth";
 import { useSidebar } from "@/lib/sidebar-context";
 import { 
@@ -159,51 +160,259 @@ function calculateMonths(start?: string, end?: string) {
   return Math.max(0, diff + 1);
 }
 
-function RequiredLabel({ children, className = "" }: { children: React.ReactNode, className?: string }) {
+/* ============================================================
+   抽屜共用樣式元件
+   欄位加上淡底色，讓一整頁的輸入框有明確邊界；
+   原本全是浮動底線，欄位一多就分不出哪裡到哪裡。
+   ============================================================ */
+const fieldClass =
+  "w-full bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-3 py-2.5 text-[13px] text-[#1A1A18] outline-none transition-colors focus:bg-white focus:border-[#B0ADA6] placeholder:text-[#C4C1B9]";
+
+const readonlyFieldClass =
+  "w-full bg-[#F0EEE9] border border-[#E8E6E1] rounded-lg px-3 py-2.5 text-[13px] text-[#8A8780] tabular-nums";
+
+function FieldLabel({ children, required }: { children: React.ReactNode; required?: boolean }) {
   return (
-    <label className={`text-xs font-bold flex items-center gap-0.5 ${className}`}>
-      {children} <span className="text-red-500">*</span>
+    <label className="block text-[11px] font-medium text-[#8A8780] mb-1.5">
+      {children}
+      {required && <span className="text-[#B4483C] ml-0.5">*</span>}
     </label>
   );
 }
 
+/** 區塊標題：小字灰色 eyebrow + 細分隔線，取代原本的藍色粗左邊框 */
+function SectionHead({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 mb-5">
+      <h3 className="text-[11px] font-semibold text-[#8A8780] tracking-[0.12em] uppercase shrink-0">
+        {children}
+      </h3>
+      <div className="h-px bg-[#E8E6E1] flex-1" />
+      {action}
+    </div>
+  );
+}
+
+/**
+ * 可搜尋的房號選擇器。
+ *
+ * 單一館別最多會有 21 間房，原生 select 展開後要逐行掃視很費力，
+ * 因此改成可輸入關鍵字過濾，並把可出租的排在最前面 —— 業務要找的九成是那幾間。
+ */
+function RoomSelect({
+  value,
+  options,
+  onChange,
+  onManual,
+}: {
+  value: string;
+  options: Room[];
+  onChange: (roomNo: string) => void;
+  onManual: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [keyword, setKeyword] = useState("");
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setKeyword("");
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  const list = useMemo(() => {
+    const k = keyword.trim().toLowerCase();
+    return options
+      .filter(r =>
+        !k ||
+        r.roomNo.toLowerCase().includes(k) ||
+        (r.featureDesc || "").toLowerCase().includes(k)
+      )
+      .sort((a, b) => {
+        // 可出租優先，其次才依房號排序
+        const aFree = a.status === "AVAILABLE" ? 0 : 1;
+        const bFree = b.status === "AVAILABLE" ? 0 : 1;
+        if (aFree !== bFree) return aFree - bFree;
+        return a.roomNo.localeCompare(b.roomNo, "zh-Hant", { numeric: true });
+      });
+  }, [options, keyword]);
+
+  const selected = options.find(r => r.roomNo === value);
+
+  return (
+    <div ref={boxRef} className="relative">
+      <div className="flex gap-2 items-center">
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          className={`${fieldClass} text-left flex items-center justify-between gap-2`}
+        >
+          <span className={value ? "" : "text-[#C4C1B9]"}>
+            {value || "點選挑選房號"}
+            {selected && (
+              <span className="text-[11px] text-[#A5A29B] ml-2">
+                {selected.areaPing ? `${selected.areaPing}坪` : ""}
+                {selected.status !== "AVAILABLE" ? `　${ROOM_STATUS_LABEL[selected.status]}` : ""}
+              </span>
+            )}
+          </span>
+          <span className="text-[#B0ADA6] text-[9px]">{open ? "▲" : "▼"}</span>
+        </button>
+        <button
+          type="button"
+          onClick={onManual}
+          className="text-[11px] text-[#A5A29B] hover:text-[#1A1A18] whitespace-nowrap transition-colors"
+        >
+          手動
+        </button>
+      </div>
+
+      {open && (
+        <div className="absolute z-50 left-0 right-0 mt-1.5 bg-white rounded-lg border border-[#E0DDD6] shadow-[0_8px_24px_rgba(0,0,0,0.08)] overflow-hidden">
+          <div className="p-2 border-b border-[#F0EEE9]">
+            <input
+              autoFocus
+              value={keyword}
+              onChange={e => setKeyword(e.target.value)}
+              placeholder="輸入房號或特色搜尋"
+              className="w-full px-3 py-2 text-[12px] bg-[#FAFAF8] rounded-md outline-none focus:bg-white text-[#1A1A18] placeholder:text-[#C4C1B9]"
+            />
+          </div>
+
+          <div className="max-h-64 overflow-y-auto custom-scrollbar">
+            {value && (
+              <button
+                type="button"
+                onClick={() => { onChange(""); setOpen(false); setKeyword(""); }}
+                className="w-full text-left px-4 py-2 text-[11px] text-[#A5A29B] hover:bg-[#FAFAF8] border-b border-[#F0EEE9] transition-colors"
+              >
+                清除選擇
+              </button>
+            )}
+
+            {list.map(r => {
+              const isFree = r.status === "AVAILABLE";
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => { onChange(r.roomNo); setOpen(false); setKeyword(""); }}
+                  className={`w-full text-left px-4 py-2.5 hover:bg-[#FAFAF8] transition-colors border-b border-[#F5F4F1] last:border-0 ${
+                    r.roomNo === value ? "bg-[#FAFAF8]" : ""
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-baseline gap-2 min-w-0">
+                      <span className="text-[13px] font-semibold text-[#1A1A18] shrink-0">{r.roomNo}</span>
+                      <span className="text-[10px] text-[#A5A29B] shrink-0">
+                        {r.areaPing ? `${r.areaPing}坪` : ""}
+                        {r.capacityMax ? `・${r.capacityMax}人` : ""}
+                      </span>
+                      <span className="text-[10px] text-[#B0ADA6] truncate">{r.featureDesc}</span>
+                    </div>
+                    <span
+                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0 ${
+                        isFree ? "bg-[#E8EFE6] text-[#4F7A52]" : "bg-[#F0EEE9] text-[#A5A29B]"
+                      }`}
+                    >
+                      {ROOM_STATUS_LABEL[r.status]}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+
+            {list.length === 0 && (
+              <div className="py-10 text-center text-[12px] text-[#B0ADA6]">
+                找不到符合的房號
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 五個實體場館各自對應一個色相，作為卡片左緣的識別色帶。
+ * 取低彩度的建材色（陶土、石板、苔綠、暗紫、赭石），
+ * 目的是讓整面看板不用讀字也能看出案件的館別分布。
+ */
+const BUILDING_ACCENT: Record<BuildingId, string> = {
+  "四維館": "#8A6F5C",
+  "民權20樓": "#4E6A74",
+  "民權21樓": "#6B7C5D",
+  "民權27樓": "#87687A",
+  "民權28樓": "#A8845C",
+};
+
 function CardBase({ item, isOverlay = false }: { item: LeaseCard; isOverlay?: boolean }) {
   const days = getDisplayDays(item);
   const isFinalStage = item.stage === "S7" || item.stage === "S8";
-  const badgeStyle = isFinalStage 
-    ? "bg-slate-400 text-white" 
-    : (days >= 10 ? "bg-red-500 text-white" : days >= 3 ? "bg-amber-400 text-white" : "bg-emerald-500 text-white");
+  const accent = BUILDING_ACCENT[item.building] || "#8A8780";
+
+  // 停留天數只有超過門檻才上色，否則整面看板都是警示色，真正該處理的反而看不出來
+  const dwellTone = isFinalStage
+    ? "text-[#8A8780]"
+    : days >= 14
+    ? "text-[#B4483C]"
+    : days >= 7
+    ? "text-[#A97B22]"
+    : "text-[#8A8780]";
+
+  const hasAmount = (item.totalContractAmount || 0) > 0;
+  const location = [item.building, item.roomNo].filter(Boolean).join(" · ");
 
   return (
-    <div 
-      style={{ backgroundColor: "#E6F7FF" }}
-      className={`relative rounded-xl border border-slate-200 p-4 shadow-sm transition-all ${
-      isOverlay ? "shadow-2xl ring-2 ring-blue-500 scale-105 cursor-grabbing" : "hover:ring-2 hover:ring-blue-400 cursor-grab"
-    }`}>
-      <div className="flex justify-between items-start mb-2">
-        <div className="text-sm font-bold text-slate-800 line-clamp-1 pr-12">{item.companyName}</div>
-        <div className={`absolute top-3 right-3 px-2 py-0.5 rounded text-[10px] font-bold shadow-sm ${badgeStyle}`}>
-          {isFinalStage ? `耗時 ${days}天` : `停留 ${days}天`}
+    <div
+      className={`group relative bg-white rounded-lg overflow-hidden transition-all ${
+        isOverlay
+          ? "shadow-xl ring-1 ring-black/10 rotate-1 cursor-grabbing"
+          : "shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-[#E8E6E1] hover:shadow-[0_4px_12px_rgba(0,0,0,0.06)] hover:ring-[#D5D2CB] cursor-grab"
+      }`}
+    >
+      {/* 館別色帶 */}
+      <div
+        className="absolute left-0 top-0 bottom-0 w-[3px] transition-all group-hover:w-[5px]"
+        style={{ backgroundColor: accent }}
+      />
+
+      <div className="pl-5 pr-4 py-4">
+        <div className="flex items-start justify-between gap-3 mb-2.5">
+          <h4 className="text-[15px] font-semibold text-[#1A1A18] leading-snug tracking-tight line-clamp-2 flex-1">
+            {item.companyName || "未命名案件"}
+          </h4>
+          <span
+            className={`text-[11px] font-medium tabular-nums shrink-0 pt-0.5 ${dwellTone}`}
+            title={isFinalStage ? "從建立到結案的總天數" : "停留在目前階段的天數"}
+          >
+            {days}d
+          </span>
         </div>
-      </div>
-      <div className="mb-2">
-        <span className="bg-blue-600 text-white text-[10px] font-bold px-2.5 py-1 rounded shadow-sm ">辦公室出租</span>
-      </div>
-      <div className="flex items-center gap-2 mb-3">
-        <div className="text-[11px] text-slate-400 font-medium">窗口:{item.contactPerson}</div>
-        <span className={`text-[9px] px-1 rounded border border-slate-200 font-bold ${item.taxType === "應稅(5%)" ? "bg-blue-50 text-blue-500" : "bg-slate-50 text-slate-500"}`}>
-          {item.taxType}
-        </span>
-      </div>
-      <div className="flex justify-between items-end mt-auto">
-        <div className="space-y-1">
-          <div className="text-[10px] font-bold bg-slate-100/50 text-slate-600 px-1.5 py-0.5 rounded w-fit italic border border-slate-200">{item.building}</div>
-          <div className="text-sm font-bold text-blue-600">{currency(item.totalContractAmount)}</div>
+
+        <div className="text-[11px] text-[#8A8780] leading-relaxed space-y-0.5">
+          {location && <div>{location}</div>}
+          {item.contactPerson && <div>窗口 {item.contactPerson}</div>}
         </div>
-        <div className="text-right">
-          <div className="text-[9px] text-slate-400">信件: {item.mailNo || "-"}</div>
-          <div className="text-[10px] text-slate-500 font-bold">房號: {item.roomNo || "未定"}</div>
-        </div>
+
+        {/* 金額只在真的有數字時才顯示，避免滿版的 $0 搶走注意力 */}
+        {hasAmount && (
+          <div className="mt-3 pt-3 border-t border-[#F0EEE9] flex items-baseline justify-between">
+            <span className="text-[14px] font-semibold text-[#1A1A18] tabular-nums tracking-tight">
+              {currency(item.totalContractAmount)}
+            </span>
+            {item.taxType === "免稅/未稅" && (
+              <span className="text-[10px] text-[#A5A29B]">未稅</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -221,26 +430,42 @@ function SortableCard({ item, onClick }: { item: LeaseCard; onClick: () => void 
 
 function StageColumn({ stage, cards, onCardClick }: { stage: typeof STAGES[0]; cards: LeaseCard[]; onCardClick: (id: string) => void }) {
   const { setNodeRef } = useDroppable({ id: stage.id });
+  const count = (cards || []).length;
+  // 階段代碼與名稱拆開，代碼作為次要標記，名稱才是讀取重點
+  const [code, ...rest] = stage.title.split(" ");
+  const name = rest.join(" ");
+
   return (
-    <div ref={setNodeRef} className="flex h-full w-[320px] flex-col rounded-2xl border border-slate-200 bg-white shadow-sm shrink-0 self-stretch overflow-hidden text-slate-800">
-      <div className="p-4 pb-3 shrink-0 bg-white text-slate-800">
-        <h3 className="font-bold text-sm text-slate-800 flex items-center justify-between">
-          {stage.title}
-          <span className="bg-slate-200/50 text-slate-500 text-[10px] px-2 py-0.5 rounded-full font-bold">{(cards || []).length}</span>
-        </h3>
-        <div className="mt-3 h-px bg-slate-100" />
+    <div
+      ref={setNodeRef}
+      className="flex h-full w-[300px] flex-col shrink-0 self-stretch overflow-hidden"
+    >
+      <div className="px-1 pb-3 shrink-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10px] font-semibold text-[#B0ADA6] tabular-nums tracking-wider">
+            {code}
+          </span>
+          <h3 className="text-[13px] font-semibold text-[#3A3833] tracking-tight">{name}</h3>
+          <span className="ml-auto text-[11px] font-medium text-[#B0ADA6] tabular-nums">
+            {count}
+          </span>
+        </div>
+        <div className="mt-2.5 h-px bg-[#E0DDD6]" />
       </div>
+
       <SortableContext items={(cards || []).map(x => x.id)} strategy={verticalListSortingStrategy}>
-        <div className="flex-1 min-h-0 px-4 pt-4 pb-12 space-y-4 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 min-h-0 px-1 pt-1 pb-12 space-y-2.5 overflow-y-auto custom-scrollbar">
           {(cards || []).map(item => <SortableCard key={item.id} item={item} onClick={() => onCardClick(item.id)} />)}
-          {(cards || []).length === 0 && <div className="min-h-[140px] border-2 border-dashed border-slate-100 rounded-xl bg-slate-50/40" />}
+          {count === 0 && (
+            <div className="min-h-[120px] rounded-lg border border-dashed border-[#E0DDD6]" />
+          )}
         </div>
       </SortableContext>
     </div>
   );
 }
 
-function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }: { item: LeaseCard | null; isCreate: boolean; onClose: () => void; onSave: (data: LeaseCard) => void; onDelete: (id: string) => void; currentUser: string }) {
+function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser, rooms, floors }: { item: LeaseCard | null; isCreate: boolean; onClose: () => void; onSave: (data: LeaseCard) => void; onDelete: (id: string) => void; currentUser: string; rooms: Room[]; floors: Floor[] }) {
   const [formData, setFormData] = useState<Partial<LeaseCard>>({});
   const [activeTab, setActiveTab] = useState<"info" | "todo" | "copy" | "history">("info");
   const [history, setHistory] = useState<HistoryLog[]>([]);
@@ -248,9 +473,22 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
   // --- 附件上傳狀態 ---
   const [uploading, setUploading] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // 新增案件時還沒有文件 ID，先給一個暫用資料夾名稱讓檔案有地方放
   const draftScope = useRef(`draft-${Date.now()}`);
+  // 母表沒有的房間（新隔間、特殊情況）仍要能自由輸入
+  const [manualRoom, setManualRoom] = useState(false);
+
+  // 依目前選擇的館別過濾房號，業務不必從 69 間裡面找
+  const roomOptions = useMemo(() => {
+    const floorIds = floors
+      .filter((f) => f.building === formData.building)
+      .map((f) => f.id);
+    return rooms
+      .filter((r) => r.active && floorIds.includes(r.floorId))
+      .sort((a, b) => a.roomNo.localeCompare(b.roomNo, "zh-Hant", { numeric: true }));
+  }, [rooms, floors, formData.building]);
 
   // 1. 修正後的資料載入 useEffect
   useEffect(() => {
@@ -272,6 +510,13 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
         if (prev.id !== item.id) setActiveTab("info");
         return { ...item, todos: mergedTodos, attachments: item.attachments || [] };
       });
+      // 舊案件的房號可能是自由輸入的格式，母表比對不到就直接切成手動模式，
+      // 免得下拉選單顯示成未選擇、讓人以為資料不見了
+      if (item.roomNo && !rooms.some((r) => r.roomNo === item.roomNo)) {
+        setManualRoom(true);
+      } else {
+        setManualRoom(false);
+      }
 
       const qLogs = query(collection(db, "cases", item.id, "logs"), orderBy("timestamp", "desc"));
       const unsubLogs = onSnapshot(qLogs, (snapshot) => {
@@ -389,9 +634,15 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
     await updateDoc(doc(db, "cases", item.id), { todos: updatedTodos });
   };
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    alert("內容已複製到剪貼簿！");
+  // 複製後在按鈕上顯示狀態，比跳 alert 打斷操作好
+  const handleCopy = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch {
+      alert("複製失敗，請手動選取內容");
+    }
   };
 
   const handleValidateAndSave = () => {
@@ -412,211 +663,430 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
 
   if (!item && !isCreate) return null;
 
+  const TABS: { id: typeof activeTab; label: string }[] = [
+    { id: "info", label: "基本資訊" },
+    { id: "todo", label: "待辦清單" },
+    { id: "copy", label: "內容複製" },
+    { id: "history", label: "歷程記錄" },
+  ];
+
+  const doneCount = (formData.todos || []).filter(t => t.completed).length;
+  const totalTodos = (formData.todos || []).length;
+
   return (
-    <div className="fixed inset-0 z-[300] flex justify-end font-sans text-slate-800">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col overflow-hidden">
-        <header className="p-6 border-b flex flex-col gap-4 bg-white shrink-0">
-          <div className="flex justify-between items-center text-slate-800">
-            <h2 className="text-xl font-bold">{isCreate ? "🆕 新增出租案件" : "📝 編輯案件詳情"}</h2>
-            <button onClick={onClose} className="text-slate-400 text-2xl hover:text-slate-600">✕</button>
+    <div className="fixed inset-0 z-[300] flex justify-end font-sans">
+      <div className="absolute inset-0 bg-[#1A1A18]/30 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="relative w-full max-w-2xl bg-white h-full shadow-[0_0_40px_rgba(0,0,0,0.12)] flex flex-col overflow-hidden">
+        <header className="px-8 pt-7 shrink-0 bg-white">
+          <div className="flex justify-between items-start mb-6">
+            <div className="min-w-0 pr-4">
+              <div className="text-[10px] font-semibold text-[#B0ADA6] tracking-[0.16em] uppercase mb-1.5">
+                {isCreate ? "New case" : "Case detail"}
+              </div>
+              <h2 className="text-[19px] font-semibold text-[#1A1A18] tracking-tight truncate">
+                {isCreate ? "新增出租案件" : (formData.companyName || "未命名案件")}
+              </h2>
+            </div>
+            <button
+              onClick={onClose}
+              className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[#A5A29B] hover:bg-[#F5F4F1] hover:text-[#1A1A18] transition-colors"
+            >
+              ✕
+            </button>
           </div>
           {!isCreate && (
-            <div className="flex gap-6 border-b border-slate-100">
-              {["info", "todo", "copy", "history"].map((tab) => (
-                <button key={tab} onClick={() => setActiveTab(tab as any)} className={`pb-2 px-1 text-sm font-bold transition-all ${activeTab === tab ? "text-blue-600 border-b-2 border-blue-600" : "text-slate-400"}`}>
-                  {tab === "info" ? "基本資訊" : tab === "todo" ? "待辦清單" : tab === "copy" ? "內容複製" : "歷程記錄"}
-                </button>
-              ))}
+            <div className="flex gap-1 -mb-px">
+              {TABS.map((tab) => {
+                const active = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`px-3.5 py-2.5 text-[13px] font-medium transition-colors relative ${
+                      active ? "text-[#1A1A18]" : "text-[#A5A29B] hover:text-[#3A3833]"
+                    }`}
+                  >
+                    {tab.label}
+                    {tab.id === "todo" && totalTodos > 0 && (
+                      <span className="ml-1.5 text-[10px] tabular-nums text-[#B0ADA6]">
+                        {doneCount}/{totalTodos}
+                      </span>
+                    )}
+                    {active && (
+                      <span className="absolute left-3 right-3 -bottom-px h-[2px] bg-[#1A1A18] rounded-full" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
+          <div className="h-px bg-[#E8E6E1]" />
         </header>
 
-        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-8 py-8 custom-scrollbar bg-white">
           {activeTab === "info" && (
-            <div className="space-y-10 text-slate-800">
-              <section className="space-y-4">
-                <h3 className="text-sm font-bold border-l-4 border-blue-600 pl-3 uppercase tracking-widest">基本資訊</h3>
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="col-span-2 space-y-2">
-                    <RequiredLabel>所屬館別</RequiredLabel>
-                    <div className="flex flex-wrap gap-2">
-                      {BUILDINGS.map(b => (
-                        <button key={b} type="button" onClick={() => setFormData({...formData, building: b})} className={`px-4 py-2 text-xs font-bold rounded-xl border transition-all ${formData.building === b ? "bg-slate-800 text-white border-slate-800" : "bg-white text-slate-500 border-slate-200"}`}>{b}</button>
-                      ))}
+            <div className="space-y-10">
+              {/* ---------- 基本資訊 ---------- */}
+              <section>
+                <SectionHead>基本資訊</SectionHead>
+                <div className="grid grid-cols-2 gap-x-5 gap-y-5">
+                  <div className="col-span-2">
+                    <FieldLabel required>所屬館別</FieldLabel>
+                    <div className="flex flex-wrap gap-1.5">
+                      {BUILDINGS.map(b => {
+                        const active = formData.building === b;
+                        return (
+                          <button
+                            key={b}
+                            type="button"
+                            onClick={() => setFormData({...formData, building: b})}
+                            className={`px-3.5 py-2 text-[12px] font-medium rounded-lg border transition-all ${
+                              active
+                                ? "bg-[#1A1A18] text-white border-[#1A1A18]"
+                                : "bg-white text-[#8A8780] border-[#E0DDD6] hover:border-[#B0ADA6]"
+                            }`}
+                          >
+                            {b}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
-                  <div className="col-span-2"><RequiredLabel>公司/案件全銜</RequiredLabel><input value={formData.companyName || ""} onChange={e => setFormData({...formData, companyName: e.target.value})} className="w-full border-b py-2 text-sm outline-none focus:border-blue-600" /></div>
-                  <div><RequiredLabel>主要窗口姓名</RequiredLabel><input value={formData.contactPerson || ""} onChange={e => setFormData({...formData, contactPerson: e.target.value})} className="w-full border-b py-2 text-sm outline-none focus:border-blue-600" /></div>
-                  <div><label className="text-xs font-bold text-slate-500 block mb-1">聯絡電話</label><input value={formData.phone || ""} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full border-b py-2 text-sm outline-none focus:border-blue-600" /></div>
+
+                  <div className="col-span-2">
+                    <FieldLabel required>公司／案件全銜</FieldLabel>
+                    <input
+                      value={formData.companyName || ""}
+                      onChange={e => setFormData({...formData, companyName: e.target.value})}
+                      className={fieldClass}
+                      placeholder="輸入公司或案件名稱"
+                    />
+                  </div>
+
                   <div>
-                    <label className="text-xs font-bold text-slate-500 block mb-1">公司統編</label>
-                    <input value={formData.taxId || ""} onChange={e => setFormData({...formData, taxId: e.target.value})} className="w-full border-b py-2 text-sm outline-none focus:border-blue-600 text-slate-800" placeholder="8碼數字" />
+                    <FieldLabel required>主要窗口姓名</FieldLabel>
+                    <input
+                      value={formData.contactPerson || ""}
+                      onChange={e => setFormData({...formData, contactPerson: e.target.value})}
+                      className={fieldClass}
+                    />
+                  </div>
+
+                  <div>
+                    <FieldLabel>聯絡電話</FieldLabel>
+                    <input
+                      value={formData.phone || ""}
+                      onChange={e => setFormData({...formData, phone: e.target.value})}
+                      className={fieldClass}
+                    />
+                  </div>
+
+                  <div>
+                    <FieldLabel>公司統編</FieldLabel>
+                    <input
+                      value={formData.taxId || ""}
+                      onChange={e => setFormData({...formData, taxId: e.target.value})}
+                      className={`${fieldClass} tabular-nums`}
+                      placeholder="8 碼數字"
+                    />
+                  </div>
+
+                  <div>
+                    <FieldLabel>房號</FieldLabel>
+                    {manualRoom ? (
+                      <div className="flex gap-2 items-center">
+                        <input
+                          value={formData.roomNo || ""}
+                          onChange={e => setFormData({...formData, roomNo: e.target.value})}
+                          className={fieldClass}
+                          placeholder="自行輸入房號"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setManualRoom(false)}
+                          className="text-[11px] text-[#A5A29B] hover:text-[#1A1A18] whitespace-nowrap transition-colors"
+                        >
+                          選單
+                        </button>
+                      </div>
+                    ) : (
+                      <RoomSelect
+                        value={formData.roomNo || ""}
+                        options={roomOptions}
+                        onChange={(roomNo) => setFormData({ ...formData, roomNo })}
+                        onManual={() => setManualRoom(true)}
+                      />
+                    )}
+                    {!manualRoom && roomOptions.length === 0 && (
+                      <p className="text-[11px] text-[#A97B22] mt-1.5">
+                        此館別在房型母表尚無資料，可改用手動輸入
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="col-span-2">
+                    <FieldLabel>信件編號</FieldLabel>
+                    <input
+                      value={formData.mailNo || ""}
+                      onChange={e => setFormData({...formData, mailNo: e.target.value})}
+                      className={fieldClass}
+                      placeholder="信件掛號編號或備註"
+                    />
+                  </div>
+
+                  <div className="col-span-2">
+                    <FieldLabel>成交前預估金額</FieldLabel>
+                    <input
+                      type="number"
+                      value={formData.preDealEstimatedAmount === 0 ? "" : formData.preDealEstimatedAmount || ""}
+                      onChange={e => setFormData({...formData, preDealEstimatedAmount: Number(e.target.value)})}
+                      className={`${fieldClass} tabular-nums`}
+                      placeholder="尚未成交前的預估金額"
+                    />
+                  </div>
+
+                  <div className="col-span-2">
+                    <FieldLabel>卡片建立時間</FieldLabel>
+                    <div className={readonlyFieldClass}>
+                      {formData.createdAt ? new Date(formData.createdAt).toLocaleString('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : "—"}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* ---------- 財務與週期 ---------- */}
+              <section>
+                <SectionHead>財務與週期</SectionHead>
+                <div className="grid grid-cols-2 gap-x-5 gap-y-5">
+                  <div>
+                    <FieldLabel>稅別</FieldLabel>
+                    <select
+                      value={formData.taxType || "應稅(5%)"}
+                      onChange={e => setFormData({...formData, taxType: e.target.value as TaxType})}
+                      className={fieldClass}
+                    >
+                      <option value="應稅(5%)">應稅(5%)</option>
+                      <option value="免稅/未稅">免稅/未稅</option>
+                    </select>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-500 block mb-1">房號</label>
-                    <input value={formData.roomNo || ""} onChange={e => setFormData({...formData, roomNo: e.target.value})} className="w-full border-b py-2 text-sm outline-none focus:border-blue-600 text-slate-800" placeholder="例如：A01" />
+                    <FieldLabel>繳費週期</FieldLabel>
+                    <select
+                      value={formData.paymentCycle || "月繳"}
+                      onChange={e => setFormData({...formData, paymentCycle: e.target.value})}
+                      className={fieldClass}
+                    >
+                      <option value="月繳">月繳</option>
+                      <option value="季繳">季繳</option>
+                      <option value="半年繳">半年繳</option>
+                      <option value="年繳">年繳</option>
+                    </select>
                   </div>
-                  <div className="col-span-2 text-slate-800">
-                                      <label className="text-xs font-bold text-slate-500 block mb-1">信件編號</label>
-                                      <input value={formData.mailNo || ""} onChange={e => setFormData({...formData, mailNo: e.target.value})} className="w-full border-b py-2 text-sm outline-none focus:border-blue-600 text-slate-800" placeholder="輸入信件掛號編號或備註" />
-                                    </div>
-
-                                    {/* 💡 關鍵新增：卡片建立時間 (參考工商登記邏輯) */}
-                                    <div className="col-span-2 text-slate-800">
-                                      <label className="text-xs font-bold text-slate-500 block mb-1">卡片建立時間 (僅供查看)</label>
-                                      <div className="w-full border-b py-2 text-sm bg-slate-100 text-slate-400 cursor-not-allowed font-mono px-1">
-                                        {formData.createdAt ? new Date(formData.createdAt).toLocaleString('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : "-"}
-                                      </div>
-                                    </div>
-
-                                    {/* 💡 附件區塊開始 */}
-                                    <div className="col-span-2 border-t pt-6 mt-2">
-                                      <div className="flex justify-between items-center mb-4 border-l-4 border-red-500 pl-3 bg-red-50 py-2 rounded-r-lg">
-                                        <label className="text-sm font-black text-red-600">合約附件管理</label>
-                                        <label className={`cursor-pointer text-white text-[10px] font-black px-4 py-1.5 rounded-xl shadow-md transition-all active:scale-95 ${uploading ? "bg-slate-400 cursor-wait" : "bg-red-500 hover:bg-red-600"}`}>
-                                          {uploading ? `上傳中 ${uploadPct}%` : "+ 選取檔案上傳"}
-                                          <input ref={fileInputRef} type="file" className="hidden" disabled={uploading} onChange={handleFileUpload} />
-                                        </label>
-                                      </div>
-
-                                      {uploading && (
-                                        <div className="mb-4 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                                          <div className="h-full bg-red-500 transition-all" style={{ width: `${uploadPct}%` }} />
-                                        </div>
-                                      )}
-
-                                      <div className="space-y-3">
-                                        {(formData.attachments || []).map((file, idx) => (
-                                          <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 hover:border-red-200 transition-colors">
-                                            <div className="flex flex-col flex-1 truncate pr-4">
-                                              <span className="text-xs font-bold text-slate-700 truncate">{file.name}</span>
-                                              <span className="text-[9px] text-slate-400 italic mt-1">
-                                                {file.uploadedAt?.substring(0, 10)} 上傳
-                                                {file.url?.startsWith("blob:") && (
-                                                  <span className="ml-2 text-red-500 font-bold not-italic">舊檔已失效，請重新上傳</span>
-                                                )}
-                                              </span>
-                                            </div>
-                                            <div className="flex gap-2">
-                                              <a href={file.url} target="_blank" className="text-[10px] font-black bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 text-blue-600 hover:bg-blue-50 transition-all">檢視</a>
-                                              <button 
-                                                type="button"
-                                                onClick={() => handleRemoveAttachment(idx)}
-                                                className="text-[10px] font-black bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 text-red-500 hover:bg-red-50"
-                                              >
-                                                移除
-                                              </button>
-                                            </div>
-                                          </div>
-                                        ))}
-
-                                        {/* 💡 修正：將「無附件提示」正確放入區塊內 */}
-                                        {(!formData.attachments || formData.attachments.length === 0) && (
-                                          <div className="py-10 text-center border-2 border-dashed border-slate-100 rounded-[32px] bg-slate-50/30">
-                                            <p className="text-xs font-bold text-slate-400 italic">目前尚未上傳任何合約附件</p>
-                                            <p className="text-[10px] text-slate-300 mt-2 uppercase tracking-widest font-black">Waiting for documents...</p>
-                                          </div>
-                                        )}
-                                      </div> {/* 關閉 space-y-3 */}
-                                    </div>   {/* 關閉 col-span-2 border-t */}
-
-                                    {/* 💡 新增：成交前預估金額 */}
-                                    <div className="col-span-2">
-                                      <label className="text-xs font-bold text-slate-500 block mb-1">成交前預估金額</label>
-                                      <input
-                                        type="number"
-                                        value={formData.preDealEstimatedAmount === 0 ? "" : formData.preDealEstimatedAmount || ""}
-                                        onChange={e => setFormData({...formData, preDealEstimatedAmount: Number(e.target.value)})}
-                                        className="w-full border-b py-2 text-sm outline-none focus:border-blue-600 text-slate-800"
-                                        placeholder="尚未成交前的預估金額"
-                                      />
-                                    </div>
-                                  </div>     {/* 關閉 grid-cols-2 */}
-                                </section>   {/* 💡 關閉基本資訊 section */}
-
-              <section className="space-y-4">
-                <h3 className="text-sm font-bold border-l-4 border-emerald-500 pl-3 uppercase tracking-widest">財務與週期</h3>
-                <div className="bg-emerald-50/30 p-6 rounded-2xl border border-emerald-100 space-y-6">
-                  <div className="grid grid-cols-2 gap-6">
-                    <div><label className="text-xs font-bold text-slate-500 block mb-1">稅別</label>
-                      <select value={formData.taxType || "應稅(5%)"} onChange={e => setFormData({...formData, taxType: e.target.value as TaxType})} className="w-full border-b border-emerald-200 py-2 text-sm font-bold bg-transparent outline-none">
-                        <option value="應稅(5%)">應稅(5%)</option><option value="免稅/未稅">免稅/未稅</option>
-                      </select>
-                    </div>
-                    <div><label className="text-xs font-bold text-slate-500 block mb-1">繳費週期</label>
-                      <select value={formData.paymentCycle || "月繳"} onChange={e => setFormData({...formData, paymentCycle: e.target.value})} className="w-full border-b border-emerald-200 py-2 text-sm font-bold bg-transparent outline-none">
-                        <option value="月繳">月繳</option><option value="季繳">季繳</option><option value="半年繳">半年繳</option><option value="年繳">年繳</option>
-                      </select>
-                    </div>
-                    <div><label className="text-xs font-bold text-slate-500 block mb-1">合約起日</label><input type="date" value={formData.contractStartDate || ""} onChange={e => setFormData({...formData, contractStartDate: e.target.value})} className="w-full border-b border-emerald-200 py-2 text-sm text-slate-800 bg-transparent outline-none" /></div>
-                    <div><label className="text-xs font-bold text-slate-500 block mb-1">合約迄日</label><input type="date" value={formData.contractEndDate || ""} onChange={e => setFormData({...formData, contractEndDate: e.target.value})} className="w-full border-b border-emerald-200 py-2 text-sm text-slate-800 bg-transparent outline-none" /></div>
-                    {/* 💡 這裡貼上合約週期自動感應區 */}
-                    <div className="col-span-2 bg-white/50 p-4 rounded-xl border border-emerald-100/50">
-                      <label className="text-[11px] font-bold text-emerald-700 mb-1 block">合約週期 (系統自動感應計算)</label>
-                      <div className="text-lg font-black text-slate-800">{formData.contractMonths || 0} 個月</div>
-                      <p className="text-[10px] text-slate-400 mt-1 italic">* 根據下方起訖日期自動判定，不足 30 天以 1 個月計</p>
-                    </div>
-                    {/* 💡 貼到這裡結束 */}
-                    <div><label className="text-xs font-bold text-slate-500">實際月租 (未稅)</label><input type="number" value={formData.actualRentExclTax || ""} onChange={e => setFormData({...formData, actualRentExclTax: Number(e.target.value)})} className="w-full border-b border-emerald-200 py-2 text-sm font-bold bg-transparent outline-none" /></div>
+                  <div>
+                    <FieldLabel>合約起日</FieldLabel>
+                    <input
+                      type="date"
+                      value={formData.contractStartDate || ""}
+                      onChange={e => setFormData({...formData, contractStartDate: e.target.value})}
+                      className={fieldClass}
+                    />
                   </div>
-                  <div className="pt-4 flex justify-between items-center border-t border-emerald-100 font-black text-emerald-700">
-                    <span className="text-xs font-bold text-slate-400">總金額 (含稅結果):</span>
-                    <span className="text-lg">{currency(formData.totalContractAmount || 0)}</span>
+                  <div>
+                    <FieldLabel>合約迄日</FieldLabel>
+                    <input
+                      type="date"
+                      value={formData.contractEndDate || ""}
+                      onChange={e => setFormData({...formData, contractEndDate: e.target.value})}
+                      className={fieldClass}
+                    />
                   </div>
+                  <div>
+                    <FieldLabel>實際月租（未稅）</FieldLabel>
+                    <input
+                      type="number"
+                      value={formData.actualRentExclTax || ""}
+                      onChange={e => setFormData({...formData, actualRentExclTax: Number(e.target.value)})}
+                      className={`${fieldClass} tabular-nums`}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel>合約週期（自動計算）</FieldLabel>
+                    <div className={readonlyFieldClass}>
+                      {formData.contractMonths || 0} 個月
+                    </div>
+                  </div>
+
+                  <div className="col-span-2 mt-1 bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-5 py-4 flex items-baseline justify-between">
+                    <div>
+                      <div className="text-[11px] text-[#8A8780]">總金額（含稅）</div>
+                      <div className="text-[10px] text-[#B0ADA6] mt-0.5">
+                        依起訖日期自動判定，不足 30 天以 1 個月計
+                      </div>
+                    </div>
+                    <span className="text-[20px] font-semibold text-[#1A1A18] tabular-nums tracking-tight">
+                      {currency(formData.totalContractAmount || 0)}
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              {/* ---------- 合約附件 ---------- */}
+              <section>
+                <SectionHead
+                  action={
+                    <label
+                      className={`shrink-0 text-[11px] font-medium px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${
+                        uploading
+                          ? "bg-[#F0EEE9] text-[#B0ADA6] border-[#E8E6E1] cursor-wait"
+                          : "bg-white text-[#3A3833] border-[#E0DDD6] hover:border-[#B0ADA6]"
+                      }`}
+                    >
+                      {uploading ? `上傳中 ${uploadPct}%` : "選取檔案"}
+                      <input ref={fileInputRef} type="file" className="hidden" disabled={uploading} onChange={handleFileUpload} />
+                    </label>
+                  }
+                >
+                  合約附件
+                </SectionHead>
+
+                {uploading && (
+                  <div className="mb-4 h-[3px] bg-[#F0EEE9] rounded-full overflow-hidden">
+                    <div className="h-full bg-[#1A1A18] transition-all" style={{ width: `${uploadPct}%` }} />
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  {(formData.attachments || []).map((file, idx) => (
+                    <div
+                      key={idx}
+                      className="group flex justify-between items-center gap-4 px-4 py-3 bg-[#FAFAF8] rounded-lg border border-[#E8E6E1] hover:border-[#D5D2CB] transition-colors"
+                    >
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className="text-[13px] text-[#1A1A18] truncate">{file.name}</span>
+                        <span className="text-[11px] text-[#A5A29B] mt-0.5">
+                          {file.uploadedAt?.substring(0, 10)}
+                          {file.url?.startsWith("blob:") && (
+                            <span className="ml-2 text-[#B4483C]">舊檔已失效，請重新上傳</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <a
+                          href={file.url}
+                          target="_blank"
+                          className="text-[11px] px-2.5 py-1.5 rounded-md text-[#3A3833] hover:bg-white transition-colors"
+                        >
+                          檢視
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveAttachment(idx)}
+                          className="text-[11px] px-2.5 py-1.5 rounded-md text-[#A5A29B] hover:text-[#B4483C] hover:bg-white transition-colors"
+                        >
+                          移除
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {(!formData.attachments || formData.attachments.length === 0) && (
+                    <div className="py-10 text-center border border-dashed border-[#E0DDD6] rounded-lg">
+                      <p className="text-[12px] text-[#A5A29B]">尚未上傳合約附件</p>
+                    </div>
+                  )}
                 </div>
               </section>
             </div>
           )}
 
+          {/* ---------- 待辦清單 ---------- */}
           {activeTab === "todo" && (
-            <div className="space-y-6 text-slate-800">
-              <h3 className="text-sm font-bold border-l-4 border-amber-500 pl-3 uppercase tracking-widest">服務檢查清單</h3>
-              <div className="space-y-3">
+            <div>
+              <SectionHead
+                action={
+                  <span className="shrink-0 text-[11px] tabular-nums text-[#A5A29B]">
+                    {doneCount} / {totalTodos}
+                  </span>
+                }
+              >
+                服務檢查清單
+              </SectionHead>
+
+              <div className="space-y-1">
                 {(formData.todos || []).map(todo => (
-                  <div key={todo.id} className="flex items-start gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-amber-200">
-                    <input type="checkbox" checked={todo.completed} onChange={() => handleToggleTodo(todo.id)} className="mt-1 w-6 h-6 accent-amber-500" />
-                    <div className="flex-1">
-                      <p className={`text-base font-bold ${todo.completed ? "line-through text-slate-400" : "text-slate-800"}`}>{todo.text}</p>
-                      {todo.completed && <p className="text-[10px] text-slate-400 mt-1 italic">✓ 由 {todo.completedBy} 於 {todo.completedAt} 完成</p>}
+                  <label
+                    key={todo.id}
+                    className="flex items-start gap-3.5 px-4 py-3.5 rounded-lg cursor-pointer hover:bg-[#FAFAF8] transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={todo.completed}
+                      onChange={() => handleToggleTodo(todo.id)}
+                      className="mt-0.5 w-[18px] h-[18px] accent-[#1A1A18] cursor-pointer shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-[13px] leading-relaxed transition-colors ${
+                        todo.completed ? "line-through text-[#B0ADA6]" : "text-[#1A1A18]"
+                      }`}>
+                        {todo.text}
+                      </p>
+                      {todo.completed && (
+                        <p className="text-[11px] text-[#B0ADA6] mt-1">
+                          {todo.completedBy} · {todo.completedAt}
+                        </p>
+                      )}
                     </div>
-                  </div>
+                  </label>
                 ))}
               </div>
             </div>
           )}
 
+          {/* ---------- 內容複製 ---------- */}
           {activeTab === "copy" && (
-            <div className="space-y-8 text-slate-800">
-              <div className="flex justify-between items-center border-l-4 border-purple-600 pl-3">
-                <h3 className="text-sm font-bold uppercase tracking-widest">內容快速複製</h3>
-                <span className="text-[9px] font-black bg-purple-50 text-purple-400 px-2 py-1 rounded-lg border border-purple-100">雲端同步中</span>
-              </div>
-              <div className="space-y-6">
+            <div>
+              <SectionHead>常用範本</SectionHead>
+              <div className="space-y-3">
                 {templates.length > 0 ? (
                   templates.map((temp: any) => (
-                    <div key={temp.id} className="group relative bg-slate-50 p-4 rounded-xl border border-slate-200 hover:border-purple-200 transition-all">
-                      <label className="text-xs font-bold text-purple-600 block mb-2">{temp.label}</label>
-                      <p className="text-sm whitespace-pre-wrap leading-relaxed pr-10 text-slate-700">{temp.content}</p>
-                      <button onClick={() => handleCopy(temp.content)} className="absolute top-4 right-4 text-slate-400 hover:text-purple-600">📋</button>
+                    <div
+                      key={temp.id}
+                      className="group bg-[#FAFAF8] rounded-lg border border-[#E8E6E1] p-4 hover:border-[#D5D2CB] transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-4 mb-2.5">
+                        <span className="text-[12px] font-medium text-[#3A3833]">{temp.label}</span>
+                        <button
+                          onClick={() => handleCopy(temp.content, temp.id)}
+                          className="shrink-0 text-[11px] px-2.5 py-1 rounded-md text-[#A5A29B] hover:text-[#1A1A18] hover:bg-white transition-colors"
+                        >
+                          {copiedId === temp.id ? "已複製" : "複製"}
+                        </button>
+                      </div>
+                      <p className="text-[13px] whitespace-pre-wrap leading-relaxed text-[#5F5E5A]">
+                        {temp.content}
+                      </p>
                     </div>
                   ))
                 ) : (
-                  <div className="py-20 text-center text-slate-400 italic">正在載入雲端範本...</div>
+                  <div className="py-16 text-center border border-dashed border-[#E0DDD6] rounded-lg">
+                    <p className="text-[12px] text-[#A5A29B]">尚無可用範本</p>
+                  </div>
                 )}
               </div>
             </div>
           )}
 
+          {/* ---------- 歷程記錄 ---------- */}
           {activeTab === "history" && (
-            <div className="space-y-8 text-slate-800">
-              <section className="space-y-4">
-                <h3 className="text-sm font-bold border-l-4 border-blue-600 pl-3 uppercase tracking-widest">階段天數分析</h3>
-                <div className="grid grid-cols-2 gap-4 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
-                  {STAGES.map(s => {
+            <div className="space-y-10">
+              <section>
+                <SectionHead>階段停留天數</SectionHead>
+                <div className="border border-[#E8E6E1] rounded-lg overflow-hidden">
+                  {STAGES.map((s, i) => {
                     const entryDate = formData.stageHistory?.[s.id];
                     const isFinalStage = s.id === "S7" || s.id === "S8";
-                    let duration = "-";
+                    const isCurrent = formData.stage === s.id;
+                    let duration = "—";
 
                     if (entryDate) {
                       if (isFinalStage) {
@@ -648,24 +1118,41 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
                       }
                     }
                     return (
-                      <div key={s.id} className="flex justify-between items-center p-2 border-b border-blue-100 last:border-0">
-                        <span className="text-xs font-bold text-blue-800">{s.title}</span>
-                        <span className="text-sm font-black text-slate-700">{duration}</span>
+                      <div
+                        key={s.id}
+                        className={`flex justify-between items-center px-4 py-3 ${
+                          i > 0 ? "border-t border-[#F0EEE9]" : ""
+                        } ${isCurrent ? "bg-[#FAFAF8]" : ""}`}
+                      >
+                        <span className={`text-[12px] ${isCurrent ? "text-[#1A1A18] font-medium" : "text-[#5F5E5A]"}`}>
+                          {s.title}
+                          {isCurrent && <span className="ml-2 text-[10px] text-[#A5A29B]">目前階段</span>}
+                        </span>
+                        <span className="text-[13px] tabular-nums text-[#3A3833]">{duration}</span>
                       </div>
                     );
                   })}
                 </div>
               </section>
-              <section className="space-y-4">
-                <h3 className="text-sm font-bold border-l-4 border-slate-400 pl-3 uppercase tracking-widest">操作歷史</h3>
-                <div className="relative border-l-2 border-slate-100 ml-2 pl-6 space-y-8 mt-4">
+
+              <section>
+                <SectionHead>操作紀錄</SectionHead>
+                <div className="relative border-l border-[#E8E6E1] ml-1 pl-6 space-y-6">
                   {history.map(log => (
                     <div key={log.id} className="relative">
-                      <div className="absolute -left-[31px] top-1 w-2.5 h-2.5 rounded-full bg-slate-200 border-2 border-white" />
-                      <div className="text-[11px] text-slate-400 font-medium mb-1">{log.timestamp?.toDate().toLocaleString() || "剛才"}</div>
-                      <div className="text-sm text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-100">{log.action} <span className="text-slate-400 text-xs ml-1 font-normal">by {log.user}</span></div>
+                      <div className="absolute -left-[27px] top-1.5 w-[7px] h-[7px] rounded-full bg-[#D5D2CB] ring-2 ring-white" />
+                      <div className="text-[11px] text-[#B0ADA6] mb-1 tabular-nums">
+                        {log.timestamp?.toDate().toLocaleString() || "剛才"}
+                      </div>
+                      <div className="text-[13px] text-[#3A3833] leading-relaxed">
+                        {log.action}
+                        <span className="text-[#B0ADA6] text-[11px] ml-2">{log.user}</span>
+                      </div>
                     </div>
                   ))}
+                  {history.length === 0 && (
+                    <p className="text-[12px] text-[#A5A29B]">尚無操作紀錄</p>
+                  )}
                 </div>
               </section>
             </div>
@@ -673,9 +1160,24 @@ function DetailDrawer({ item, isCreate, onClose, onSave, onDelete, currentUser }
         </div>
 
         {(activeTab === "info" || isCreate) && (
-          <footer className="p-6 border-t bg-slate-50 flex gap-4 shrink-0">
-            {!isCreate && <button type="button" onClick={() => { if(confirm(`確定要刪除「${formData.companyName}」這筆案件嗎？\n\n附件會一併從雲端刪除，此動作無法復原。`)) onDelete(formData.id!); }} className="px-6 py-4 rounded-2xl font-bold border border-red-200 text-red-500 hover:bg-red-50">刪除案件</button>}
-            <button type="button" onClick={handleValidateAndSave} className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-black transition-all">儲存內容並記錄</button>
+          <footer className="px-8 py-5 border-t border-[#E8E6E1] bg-white flex items-center gap-4 shrink-0">
+            {/* 刪除是不可逆操作，降級成文字連結，不與儲存爭奪視覺重量 */}
+            {!isCreate && (
+              <button
+                type="button"
+                onClick={() => { if(confirm(`確定要刪除「${formData.companyName}」這筆案件嗎？\n\n附件會一併從雲端刪除，此動作無法復原。`)) onDelete(formData.id!); }}
+                className="text-[12px] text-[#A5A29B] hover:text-[#B4483C] transition-colors shrink-0"
+              >
+                刪除案件
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleValidateAndSave}
+              className="ml-auto bg-[#1A1A18] text-white px-8 py-3 rounded-lg text-[13px] font-medium hover:bg-black transition-colors"
+            >
+              儲存
+            </button>
           </footer>
         )}
       </div>
@@ -732,6 +1234,8 @@ export default function CasesPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [currentUser, setCurrentUser] = useState<string>("ADMIN");
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [floors, setFloors] = useState<Floor[]>([]);
 
   useEffect(() => {
       setHasMounted(true);
@@ -755,8 +1259,49 @@ export default function CasesPage() {
         }
       });
 
-      return () => { unsubscribeAuth(); unsubscribeData(); };
+      const unsubRooms = onSnapshot(collection(db, "rooms"), (snap) =>
+        setRooms(snap.docs.map(d => ({ ...(d.data() as Room), id: d.id })))
+      );
+      const unsubFloors = onSnapshot(collection(db, "floors"), (snap) =>
+        setFloors(snap.docs.map(d => ({ ...(d.data() as Floor), id: d.id })))
+      );
+
+      return () => { unsubscribeAuth(); unsubscribeData(); unsubRooms(); unsubFloors(); };
     }, [router]);
+
+  // 案件成交或退出成交時，同步更新房型母表的出租狀態與承租資訊。
+  // 寫入後仍可在房型維護頁手動調整，這裡只負責省去人工同步的步驟。
+  const syncRoomStatus = async (card: LeaseCard | undefined, toStage: StageId) => {
+    if (!card?.roomNo) return;
+    const target = rooms.find(r => r.roomNo === card.roomNo);
+    if (!target) return; // 房號是自由輸入、母表沒有對應資料就不動
+
+    try {
+      if (toStage === "S7") {
+        await updateDoc(doc(db, "rooms", target.id), {
+          status: "OCCUPIED",
+          tenantName: card.companyName || "",
+          leaseStartDate: card.contractStartDate || "",
+          leaseEndDate: card.contractEndDate || "",
+          currentCaseId: card.id,
+          tenantSyncedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else if (card.stage === "S7") {
+        // 從成交被拖回前面的階段，代表這筆沒有真的成交，把房間釋放回可出租
+        await updateDoc(doc(db, "rooms", target.id), {
+          status: "AVAILABLE",
+          tenantName: "",
+          leaseStartDate: "",
+          leaseEndDate: "",
+          currentCaseId: "",
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (e) {
+      console.error("同步房型狀態失敗:", e);
+    }
+  };
 
   const addLogExternal = async (caseId: string, action: string) => {
     await addDoc(collection(db, "cases", caseId, "logs"), { action, user: currentUser, timestamp: serverTimestamp() });
@@ -773,13 +1318,24 @@ export default function CasesPage() {
         await addDoc(collection(db, "cases", newRef.id, "logs"), { action: "建立了新案件", user: currentUser, timestamp: serverTimestamp() });
       } else {
         await updateDoc(doc(db, "cases", id), saveData);
+        // 已成交的案件若修改了合約日期或公司名稱，房型那邊要跟著更新
+        if (data.stage === "S7" && data.roomNo) {
+          const target = rooms.find(r => r.roomNo === data.roomNo);
+          if (target) {
+            await updateDoc(doc(db, "rooms", target.id), {
+              // 狀態要一起寫，否則走儲存這條路徑時房間會停留在可出租
+              status: "OCCUPIED",
+              tenantName: data.companyName || "",
+              leaseStartDate: data.contractStartDate || "",
+              leaseEndDate: data.contractEndDate || "",
+              currentCaseId: id,
+              tenantSyncedAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
       }
 
-      const memberQuery = query(
-        collection(db, "members"), 
-        where(data.taxId ? "taxId" : "companyName", "==", data.taxId || data.companyName)
-      );
-      const memberSnap = await getDocs(memberQuery);
       const memberInfo = {
         companyName: data.companyName,
         totalContractAmount: data.totalContractAmount || 0,           
@@ -792,13 +1348,24 @@ export default function CasesPage() {
         updatedAt: serverTimestamp(),       
       };
 
-      if (memberSnap.empty) {
+      // 只有統編才是可靠的唯一鍵。公司名稱會有「大成」這種同名不同統編的情況，
+      // 也會有全銜寫法不一的問題，拿來比對可能把兩家公司併成一筆並覆蓋掉對方資料。
+      // 沒填統編時寧可多建一筆重複資料（之後補統編再合併），也不要錯誤合併。
+      let existingMemberId: string | null = null;
+      if (data.taxId) {
+        const memberSnap = await getDocs(
+          query(collection(db, "members"), where("taxId", "==", data.taxId))
+        );
+        if (!memberSnap.empty) {
+          existingMemberId = memberSnap.docs[0].id;
+          const currentTags = memberSnap.docs[0].data().tags || [];
+          const newTags = currentTags.includes("辦公室管理") ? currentTags : [...currentTags, "辦公室管理"];
+          await updateDoc(doc(db, "members", existingMemberId), { ...memberInfo, tags: newTags });
+        }
+      }
+
+      if (!existingMemberId) {
         await addDoc(collection(db, "members"), { ...memberInfo, tags: ["辦公室管理"], createdAt: serverTimestamp() });
-      } else {
-        const memberId = memberSnap.docs[0].id;
-        const currentTags = memberSnap.docs[0].data().tags || [];
-        const newTags = currentTags.includes("辦公室管理") ? currentTags : [...currentTags, "辦公室管理"];
-        await updateDoc(doc(db, "members", memberId), { ...memberInfo, tags: newTags });
       }
 
       setIsCreating(false); setSelectedId(null);
@@ -852,15 +1419,18 @@ export default function CasesPage() {
   if (!hasMounted || loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 text-slate-800">正在與雲端資料庫同步...</div>;
 
   return (
-    <div style={{ left: sidebarWidth, transition: "left 200ms" }} className="fixed inset-0 flex flex-col bg-slate-50/50 font-sans overflow-hidden text-slate-800 text-slate-800">
-  <header className="p-8 shrink-0 bg-white border-b shadow-sm z-10 text-slate-800">
-          <div className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-bold underline decoration-blue-500/30">辦公室出租管理</h1>
-            <button onClick={() => setIsCreating(true)} className="bg-slate-900 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg hover:bg-black transition-all">+ 新增案件</button>
+    <div style={{ left: sidebarWidth, transition: "left 200ms", backgroundColor: "#F5F4F1" }} className="fixed inset-0 flex flex-col font-sans overflow-hidden text-slate-800">
+  <header className="px-8 pt-8 pb-6 shrink-0 bg-white border-b border-[#E8E6E1] z-10">
+          <div className="flex justify-between items-center mb-5">
+            <div>
+              <h1 className="text-[22px] font-semibold text-[#1A1A18] tracking-tight">辦公室出租管理</h1>
+              <p className="text-[11px] text-[#A5A29B] mt-1">左側色帶代表館別，數字為停留天數</p>
+            </div>
+            <button onClick={() => setIsCreating(true)} className="bg-[#1A1A18] text-white px-5 py-2.5 rounded-lg text-[13px] font-medium hover:bg-black transition-all">新增案件</button>
           </div>
 
           {/* 💡 修正後的進階篩選列 */}
-          <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+          <div className="flex items-center gap-3 bg-[#FAFAF8] p-2 rounded-lg border border-[#E8E6E1]">
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-black text-slate-400 uppercase">搜尋</span>
               <input 
@@ -928,10 +1498,11 @@ export default function CasesPage() {
 
                 updateDoc(doc(db, "cases", aId), updatePayload);
                 addLogExternal(aId, `將案件從 ${card?.stage} 變更至 ${toStage}`);
+                syncRoomStatus(card, toStage);
               }
             }
           }}>
-            <div className="inline-flex h-full min-h-0 gap-8 items-stretch pr-8 pb-8 text-slate-800">
+            <div className="inline-flex h-full min-h-0 gap-6 items-stretch pr-8 pb-8">
               {STAGES.map((s) => (
                 <StageColumn key={s.id} stage={s} cards={byStage.get(s.id) || []} onCardClick={setSelectedId} />
               ))}
@@ -953,13 +1524,15 @@ export default function CasesPage() {
           setSelectedId(null);
         }}
         currentUser={currentUser}
+        rooms={rooms}
+        floors={floors}
       />
       <style jsx global>{` 
         .board-scroll { scrollbar-gutter: stable; }
-        .custom-scrollbar::-webkit-scrollbar { height: 12px; width: 6px; } 
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; } 
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; border: 3px solid #f1f5f9; } 
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; } 
+        .custom-scrollbar::-webkit-scrollbar { height: 10px; width: 6px; } 
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } 
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #D5D2CB; border-radius: 999px; border: 2px solid #F5F4F1; } 
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #B0ADA6; } 
       `}</style>
     </div>
   );

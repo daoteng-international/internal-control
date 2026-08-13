@@ -43,6 +43,18 @@ const STAGES: { id: StageId; title: string }[] = [
   { id: "S5", title: "S5 暫停" },
 ];
 
+/**
+ * 卡片左緣色帶對應階段進度：從尚未聯繫的淺灰，逐步推進到成交的深綠。
+ * 這條產品線沒有客戶分級，用進度上色至少讓色帶帶有資訊，而不只是裝飾。
+ */
+const STAGE_ACCENT: Record<StageId, string> = {
+  S1: "#C4C1B9",
+  S2: "#9BA394",
+  S3: "#7E9270",
+  S4: "#4F7A52",
+  S5: "#B4483C",
+};
+
 // 固定封閉式暫停原因（不像其他產品線還有「其他」自訂輸入）
 const PAUSE_OPTIONS = [
   "不符標準化案件",
@@ -164,34 +176,66 @@ function PauseReasonModal({ isOpen, onConfirm, onCancel }: { isOpen: boolean; on
 function CardBase({ item, isOverlay = false }: { item: DeltraCard; isOverlay?: boolean }) {
   const days = getDisplayDays(item);
   const isFinalStage = item.stage === "S4" || item.stage === "S5";
-  const badgeStyle = isFinalStage
-    ? "bg-slate-400 text-white"
-    : (days >= 10 ? "bg-red-500 text-white" : days >= 3 ? "bg-amber-400 text-white" : "bg-emerald-500 text-white");
   const isPaused = item.stage === "S5";
+  const accent = STAGE_ACCENT[item.stage] || STAGE_ACCENT.S1;
+
+  // 停留天數只有超過門檻才上色，否則整面看板都是警示色，真正該處理的反而看不出來
+  const dwellTone = isFinalStage
+    ? "text-[#8A8780]"
+    : days >= 14
+    ? "text-[#B4483C]"
+    : days >= 7
+    ? "text-[#A97B22]"
+    : "text-[#8A8780]";
+
+  const hasAmount = (item.amount || 0) > 0;
 
   return (
     <div
-      style={{ backgroundColor: isPaused ? "#FFF5F5" : "#F0F5FF" }}
-      className={`relative rounded-xl border border-slate-200 p-4 shadow-sm transition-all duration-200 ${isOverlay ? "shadow-2xl ring-2 ring-indigo-500 scale-105" : "hover:ring-2 hover:ring-indigo-400 cursor-grab"}`}
+      className={`group relative bg-white rounded-lg overflow-hidden transition-all ${
+        isOverlay
+          ? "shadow-xl ring-1 ring-black/10 rotate-1 cursor-grabbing"
+          : "shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-[#E8E6E1] hover:shadow-[0_4px_12px_rgba(0,0,0,0.06)] hover:ring-[#D5D2CB] cursor-grab"
+      }`}
     >
-      <div className="flex justify-between items-start mb-2 text-slate-800">
-        <div className="text-sm font-bold line-clamp-1 pr-14">{item.companyName || "未命名案件"}</div>
-        <div className={`absolute top-3 right-3 px-2 py-0.5 rounded text-[10px] font-bold shadow-sm ${badgeStyle}`}>
-          {isFinalStage ? `耗時 ${days}天` : `停留 ${days}天`}
+      {/* 階段進度色帶，暫停中轉為磚紅 */}
+      <div
+        className="absolute left-0 top-0 bottom-0 w-[3px] transition-all group-hover:w-[5px]"
+        style={{ backgroundColor: accent }}
+      />
+
+      <div className="pl-5 pr-4 py-4">
+        <div className="flex items-start justify-between gap-3 mb-2.5">
+          <h4 className="text-[15px] font-semibold text-[#1A1A18] leading-snug tracking-tight line-clamp-2 flex-1">
+            {item.companyName || "未命名案件"}
+          </h4>
+          <span
+            className={`text-[11px] font-medium tabular-nums shrink-0 pt-0.5 ${dwellTone}`}
+            title={isFinalStage ? "從建立到結案的總天數" : "停留在目前階段的天數"}
+          >
+            {days}d
+          </span>
         </div>
-      </div>
-      <div className="mb-2">
-        <span className="bg-indigo-600 text-white text-[10px] font-bold px-2.5 py-1 rounded shadow-sm">Deltra ERP</span>
-      </div>
-      <div className="text-[11px] text-slate-500 font-medium mb-3">窗口：{item.contactPerson || "未填寫"}</div>
-      {isPaused && item.pauseReason && (
-        <div className="mb-3 px-2 py-1.5 bg-red-100 border border-red-200 rounded-lg text-[10px] text-red-700 font-bold flex items-start gap-1.5 line-clamp-2">
-          <span>⚠️</span> {item.pauseReason}
+
+        <div className="text-[11px] text-[#8A8780] leading-relaxed space-y-0.5">
+          {item.contactPerson && <div>窗口 {item.contactPerson}</div>}
+          {item.taxId && <div className="tabular-nums">統編 {item.taxId}</div>}
         </div>
-      )}
-      <div className="flex justify-between items-end pt-3 border-t border-slate-100">
-        <div className="text-lg font-black text-indigo-600">{currency(item.amount)}</div>
-        <div className="text-[10px] text-slate-400">{item.taxId || "-"}</div>
+
+        {isPaused && item.pauseReason && (
+          <div className="mt-3 pt-3 border-t border-[#F0EEE9] text-[11px] text-[#B4483C] leading-relaxed line-clamp-2">
+            暫停原因　{item.pauseReason}
+          </div>
+        )}
+
+        {/* 金額只在真的有數字時才顯示，避免滿版的 $0 搶走注意力 */}
+        {hasAmount && (
+          <div className="mt-3 pt-3 border-t border-[#F0EEE9]">
+            <span className="text-[14px] font-semibold text-[#1A1A18] tabular-nums tracking-tight">
+              {currency(item.amount)}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -209,19 +253,26 @@ function SortableCard({ item, onClick }: { item: DeltraCard; onClick: () => void
 
 function StageColumn({ stage, cards, onCardClick }: { stage: (typeof STAGES)[0]; cards: DeltraCard[]; onCardClick: (id: string) => void }) {
   const { setNodeRef } = useDroppable({ id: stage.id });
+  // 階段代碼與名稱拆開，代碼作為次要標記，名稱才是讀取重點
+  const [code, ...rest] = stage.title.split(" ");
+  const name = rest.join(" ");
+
   return (
-    <div ref={setNodeRef} className="flex min-h-full w-[300px] flex-col rounded-2xl border border-slate-200 bg-slate-50/50 shadow-sm shrink-0 self-stretch overflow-hidden">
-      <div className="p-4 pb-3 shrink-0 bg-white text-slate-800 border-b border-slate-100">
-        <h3 className="font-bold text-sm flex items-center justify-between">
-          {stage.title} <span className="bg-slate-200 text-slate-500 text-[10px] px-2 py-0.5 rounded-full font-bold">{cards.length}</span>
-        </h3>
+    <div ref={setNodeRef} className="flex min-h-full w-[290px] flex-col shrink-0 self-stretch overflow-hidden">
+      <div className="px-1 pb-3 shrink-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10px] font-semibold text-[#B0ADA6] tabular-nums tracking-wider">{code}</span>
+          <h3 className="text-[13px] font-semibold text-[#3A3833] tracking-tight truncate">{name}</h3>
+          <span className="ml-auto text-[11px] font-medium text-[#B0ADA6] tabular-nums shrink-0">{cards.length}</span>
+        </div>
+        <div className="mt-2.5 h-px bg-[#E0DDD6]" />
       </div>
       <SortableContext items={cards.map((x) => x.id)} strategy={verticalListSortingStrategy}>
-        <div className="flex-1 min-h-0 px-3 pt-4 pb-12 space-y-4 overflow-y-auto custom-scrollbar text-slate-800">
+        <div className="flex-1 min-h-0 px-1 pt-1 pb-12 space-y-2.5 overflow-y-auto custom-scrollbar">
           {cards.map((item) => (
             <SortableCard key={item.id} item={item} onClick={() => onCardClick(item.id)} />
           ))}
-          {cards.length === 0 && <div className="min-h-[140px] border-2 border-dashed border-slate-200 rounded-xl bg-white/50" />}
+          {cards.length === 0 && <div className="min-h-[120px] rounded-lg border border-dashed border-[#E0DDD6]" />}
         </div>
       </SortableContext>
     </div>
@@ -535,13 +586,16 @@ export default function DeltraErpPage() {
   if (!hasMounted || loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 bg-slate-50">載入中...</div>;
 
   return (
-    <div style={{ left: sidebarWidth, transition: "left 200ms" }} className="fixed inset-0 flex flex-col bg-slate-50/50 overflow-hidden text-slate-800">
-      <header className="p-8 pb-4 shrink-0 bg-white border-b shadow-sm z-10">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold underline decoration-indigo-500/30">Deltra ERP 管理看板</h1>
-          <button onClick={() => setIsCreating(true)} className="bg-slate-900 text-white px-5 py-2 rounded-lg font-bold shadow-md hover:bg-black transition-all text-xs">+ 新增案件</button>
+    <div style={{ left: sidebarWidth, transition: "left 200ms", backgroundColor: "#F5F4F1" }} className="fixed inset-0 flex flex-col overflow-hidden text-slate-800">
+      <header className="px-8 pt-8 pb-6 shrink-0 bg-white border-b border-[#E8E6E1] z-10">
+        <div className="flex justify-between items-center mb-5">
+          <div>
+            <h1 className="text-[22px] font-semibold text-[#1A1A18] tracking-tight">Deltra ERP 管理看板</h1>
+            <p className="text-[11px] text-[#A5A29B] mt-1">左側色帶隨階段推進加深，數字為停留天數</p>
+          </div>
+          <button onClick={() => setIsCreating(true)} className="bg-[#1A1A18] text-white px-5 py-2.5 rounded-lg text-[13px] font-medium hover:bg-black transition-all">新增案件</button>
         </div>
-        <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+        <div className="flex items-center gap-3 bg-[#FAFAF8] p-2 rounded-lg border border-[#E8E6E1]">
           <span className="text-[10px] font-black text-slate-400 uppercase">搜尋</span>
           <input
             placeholder="名稱/窗口/統編"
@@ -554,8 +608,8 @@ export default function DeltraErpPage() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 px-8 pt-4 pb-6 flex flex-col">
-        <div className="board-scroll flex-1 min-h-0 overflow-auto custom-scrollbar rounded-b-2xl">
+      <main className="flex-1 min-h-0 px-8 pt-5 pb-6 flex flex-col">
+        <div className="board-scroll flex-1 min-h-0 overflow-auto custom-scrollbar">
           <DndContext
             sensors={sensors}
             onDragStart={(e) => setActiveId(String(e.active.id))}
@@ -584,7 +638,7 @@ export default function DeltraErpPage() {
               }
             }}
           >
-            <div className="inline-flex h-full min-h-0 gap-8 items-stretch pr-8 pb-8">
+            <div className="inline-flex h-full min-h-0 gap-6 items-stretch pr-8 pb-8">
               {STAGES.map((s) => (
                 <StageColumn key={s.id} stage={s} cards={byStage.get(s.id) || []} onCardClick={setSelectedId} />
               ))}
@@ -598,10 +652,10 @@ export default function DeltraErpPage() {
       <PauseReasonModal isOpen={!!pendingPauseAction} onConfirm={handleConfirmPause} onCancel={() => setPendingPauseAction(null)} />
       <style jsx global>{`
         .board-scroll { scrollbar-gutter: stable; }
-        .custom-scrollbar::-webkit-scrollbar { width: 12px; height: 12px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 999px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; border: 3px solid #f1f5f9; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #D5D2CB; border-radius: 999px; border: 2px solid #F5F4F1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #B0ADA6; }
       `}</style>
     </div>
   );

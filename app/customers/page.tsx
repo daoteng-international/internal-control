@@ -53,17 +53,41 @@ interface Customer {
   productLines?: string[];  
 }
 
+/** 產品線色帶，與各看板的設計語言一致 */
+const LINE_ACCENT: Record<string, string> = {
+  "辦公室出租": "#4E6A74",
+  "質晑所課程": "#A8845C",
+  "活動管理": "#87687A",
+};
+
 // --- 工具函數 ---
 function currency(n: number) {
   return new Intl.NumberFormat("zh-TW", { style: "currency", currency: "TWD", maximumFractionDigits: 0 }).format(n || 0);
 }
 
+const fieldClass =
+  "w-full bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-3 py-2.5 text-[13px] text-[#1A1A18] outline-none transition-colors focus:bg-white focus:border-[#B0ADA6] placeholder:text-[#C4C1B9]";
+
 // --- 子組件：表單標籤 ---
-function RequiredLabel({ children }: { children: React.ReactNode }) {
+function FieldLabel({ children, required }: { children: React.ReactNode; required?: boolean }) {
   return (
-    <label className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-1 mb-2">
-      {children} <span className="text-rose-500 text-base">*</span>
+    <label className="block text-[11px] font-medium text-[#8A8780] mb-1.5">
+      {children}
+      {required && <span className="text-[#B4483C] ml-0.5">*</span>}
     </label>
+  );
+}
+
+/** 區塊標題：小字 eyebrow + 延伸細線 */
+function SectionHead({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 mb-5">
+      <h3 className="text-[11px] font-semibold text-[#8A8780] tracking-[0.12em] uppercase shrink-0">
+        {children}
+      </h3>
+      <div className="h-px bg-[#E8E6E1] flex-1" />
+      {action}
+    </div>
   );
 }
 
@@ -91,11 +115,13 @@ function CustomerFormDrawer({
         taxId: "", actualRentExclTax: 0, actualRentInclTax: 0, totalContractAmount: 0,
         specialRequirements: [] // 初始化特殊需求
       });
+      setActiveTab("profile");
     } else if (item) {
       setFormData({
         ...item,
         specialRequirements: item.specialRequirements || [] // 讀取現有紀錄
       });
+      setActiveTab("profile");
     }
   }, [item, isCreate]);
 
@@ -116,35 +142,64 @@ function CustomerFormDrawer({
 
   if (!item && !isCreate) return null;
 
+  const reqCount = (formData.specialRequirements || []).length;
+
   return (
-    <div className="fixed inset-0 z-[100] flex justify-end font-sans text-slate-800">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => onClose()} />
-      <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300 text-slate-800">
-        <header className="px-8 pt-8 bg-white border-b border-slate-100">
+    <div className="fixed inset-0 z-[100] flex justify-end font-sans">
+      <div className="absolute inset-0 bg-[#1A1A18]/30 backdrop-blur-[2px]" onClick={() => onClose()} />
+      <div className="relative w-full max-w-2xl bg-white h-full shadow-[0_0_40px_rgba(0,0,0,0.12)] flex flex-col overflow-hidden">
+        <header className="px-8 pt-7 shrink-0 bg-white">
           <div className="flex justify-between items-start mb-6">
-            <div>
-              <h2 className="text-2xl font-black text-slate-800 tracking-tight tracking-tight">
-                {isCreate ? "🆕 新增客戶資料" : "📝 編輯客戶檔案"}
+            <div className="min-w-0 pr-4">
+              <div className="text-[10px] font-semibold text-[#B0ADA6] tracking-[0.16em] uppercase mb-1.5">
+                {isCreate ? "New customer" : "Customer profile"}
+              </div>
+              <h2 className="text-[19px] font-semibold text-[#1A1A18] tracking-tight truncate">
+                {isCreate ? "新增客戶主檔" : (formData.companyName || "未命名客戶")}
               </h2>
-              <p className="text-sm text-slate-400 mt-1 font-medium">請填寫標準化欄位以確保跨產品線資料同步</p>
             </div>
-            <button onClick={() => onClose()} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400">✕</button>
+            <button
+              onClick={() => onClose()}
+              className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[#A5A29B] hover:bg-[#F5F4F1] hover:text-[#1A1A18] transition-colors"
+            >
+              ✕
+            </button>
           </div>
-          {/* 分頁切換按鈕區 */}
-          <div className="flex gap-8">
-            <button onClick={() => setActiveTab("profile")} className={`pb-4 text-sm font-bold border-b-2 transition-all ${activeTab === "profile" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}>基本與財務資訊</button>
-            <button onClick={() => setActiveTab("requirements")} className={`pb-4 text-sm font-bold border-b-2 transition-all ${activeTab === "requirements" ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}>特殊需求紀錄</button>
+
+          <div className="flex gap-1 -mb-px">
+            {([
+              { id: "profile", label: "基本資料" },
+              { id: "requirements", label: "特殊需求" },
+            ] as const).map((tab) => {
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`px-3.5 py-2.5 text-[13px] font-medium transition-colors relative ${
+                    active ? "text-[#1A1A18]" : "text-[#A5A29B] hover:text-[#3A3833]"
+                  }`}
+                >
+                  {tab.label}
+                  {tab.id === "requirements" && reqCount > 0 && (
+                    <span className="ml-1.5 text-[10px] tabular-nums text-[#B0ADA6]">{reqCount}</span>
+                  )}
+                  {active && (
+                    <span className="absolute left-3 right-3 -bottom-px h-[2px] bg-[#1A1A18] rounded-full" />
+                  )}
+                </button>
+              );
+            })}
           </div>
+          <div className="h-px bg-[#E8E6E1]" />
         </header>
 
-        <div className="flex-1 overflow-y-auto p-8 bg-blue-50/30">
+        <div className="flex-1 overflow-y-auto px-8 py-8 custom-scrollbar bg-white">
           {activeTab === "profile" ? (
             <div className="space-y-10">
-              <section className="space-y-4">
-                <label className="text-xs font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full"></span> 產品線分群 (多選)
-                </label>
-                <div className="flex flex-wrap gap-3">
+              <section>
+                <SectionHead>產品線分群</SectionHead>
+                <div className="flex flex-wrap gap-1.5">
                   {PRODUCT_TAGS.map(tag => {
                     const allTags = [
                       ...(Array.isArray(formData.tags) ? formData.tags : []),
@@ -159,11 +214,12 @@ function CustomerFormDrawer({
                       <button 
                         key={tag} 
                         onClick={() => toggleTag(tag)} 
-                        className={`px-5 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${
+                        className={`px-3.5 py-2 text-[12px] font-medium rounded-lg border transition-all ${
                           isActive 
-                            ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-100" 
-                            : "bg-white border-slate-200 text-slate-400 hover:border-indigo-200"
+                            ? "text-white border-transparent" 
+                            : "bg-white text-[#8A8780] border-[#E0DDD6] hover:border-[#B0ADA6]"
                         }`}
+                        style={isActive ? { backgroundColor: LINE_ACCENT[tag] } : undefined}
                       >
                         {tag}
                       </button>
@@ -172,47 +228,83 @@ function CustomerFormDrawer({
                 </div>
               </section>
 
-              <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
-                <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+              <section>
+                <SectionHead>聯絡資料</SectionHead>
+                <div className="grid grid-cols-2 gap-x-5 gap-y-5">
                   <div className="col-span-2">
-                    <RequiredLabel>公司全銜 / 案件名稱</RequiredLabel>
-                    <input value={formData.companyName || ""} onChange={e => setFormData({...formData, companyName: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:border-blue-500 outline-none font-bold" />
+                    <FieldLabel required>公司全銜／案件名稱</FieldLabel>
+                    <input
+                      value={formData.companyName || ""}
+                      onChange={e => setFormData({...formData, companyName: e.target.value})}
+                      className={fieldClass}
+                      placeholder="輸入公司全銜"
+                    />
                   </div>
                   <div>
-                    <RequiredLabel>主要窗口姓名</RequiredLabel>
-                    <input value={formData.contactPerson || ""} onChange={e => setFormData({...formData, contactPerson: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" />
+                    <FieldLabel required>主要窗口姓名</FieldLabel>
+                    <input
+                      value={formData.contactPerson || ""}
+                      onChange={e => setFormData({...formData, contactPerson: e.target.value})}
+                      className={fieldClass}
+                    />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-500 mb-2 block uppercase tracking-widest">聯絡電話</label>
-                    <input value={formData.phone || ""} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" />
+                    <FieldLabel required>統一編號</FieldLabel>
+                    <input
+                      value={formData.taxId || ""}
+                      onChange={e => setFormData({...formData, taxId: e.target.value})}
+                      className={`${fieldClass} tabular-nums`}
+                      placeholder="8 碼數字"
+                    />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-500 mb-2 block uppercase tracking-widest">聯絡信箱</label>
-                    <input value={formData.email || ""} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" />
+                    <FieldLabel>聯絡電話</FieldLabel>
+                    <input
+                      value={formData.phone || ""}
+                      onChange={e => setFormData({...formData, phone: e.target.value})}
+                      className={fieldClass}
+                    />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-500 mb-2 block uppercase tracking-widest">方便聯繫時間</label>
-                    <input value={formData.bestContactTime || ""} onChange={e => setFormData({...formData, bestContactTime: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" />
+                    <FieldLabel>聯絡信箱</FieldLabel>
+                    <input
+                      value={formData.email || ""}
+                      onChange={e => setFormData({...formData, email: e.target.value})}
+                      className={fieldClass}
+                    />
                   </div>
-                  <div>
-                    <RequiredLabel>統編</RequiredLabel>
-                    <input value={formData.taxId || ""} onChange={e => setFormData({...formData, taxId: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" />
+                  <div className="col-span-2">
+                    <FieldLabel>方便聯繫時間</FieldLabel>
+                    <input
+                      value={formData.bestContactTime || ""}
+                      onChange={e => setFormData({...formData, bestContactTime: e.target.value})}
+                      className={fieldClass}
+                      placeholder="例如：平日下午"
+                    />
                   </div>
                 </div>
               </section>
             </div>
           ) : (
-            <div className="space-y-6">
-              <div className="flex justify-between items-center mb-2 text-slate-800">
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest italic">歷史需求紀錄</h3>
-                <button onClick={addRequirement} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-indigo-700 shadow-md transition-all">＋ 新增紀錄</button>
-              </div>
+            <div>
+              <SectionHead
+                action={
+                  <button
+                    onClick={addRequirement}
+                    className="shrink-0 text-[11px] font-medium px-3 py-1.5 rounded-lg border border-[#E0DDD6] text-[#3A3833] bg-white hover:border-[#B0ADA6] transition-colors"
+                  >
+                    新增紀錄
+                  </button>
+                }
+              >
+                歷史需求紀錄
+              </SectionHead>
               
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {formData.specialRequirements?.length > 0 ? (
                   formData.specialRequirements.map((req: SpecialRequirement, idx: number) => (
-                    <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4 animate-in fade-in slide-in-from-top-2 text-slate-800">
-                      <div className="flex gap-3 text-slate-800">
+                    <div key={idx} className="bg-[#FAFAF8] p-4 rounded-lg border border-[#E8E6E1] space-y-3">
+                      <div className="flex gap-2 items-center">
                         <input 
                           type="date" 
                           value={req.date} 
@@ -221,7 +313,7 @@ function CustomerFormDrawer({
                             newList[idx].date = e.target.value;
                             setFormData({ ...formData, specialRequirements: newList });
                           }}
-                          className="bg-slate-50 border-none rounded-lg px-3 py-1.5 text-xs font-bold text-slate-600 outline-none"
+                          className="bg-white border border-[#E8E6E1] rounded-md px-2.5 py-1.5 text-[11px] text-[#3A3833] outline-none tabular-nums"
                         />
                         <select 
                           value={req.category}
@@ -230,7 +322,7 @@ function CustomerFormDrawer({
                             newList[idx].category = e.target.value as any;
                             setFormData({ ...formData, specialRequirements: newList });
                           }}
-                          className="bg-indigo-50 text-indigo-600 border-none rounded-lg px-3 py-1.5 text-xs font-black outline-none"
+                          className="bg-white border border-[#E8E6E1] rounded-md px-2.5 py-1.5 text-[11px] text-[#3A3833] outline-none"
                         >
                           <option value="行政">行政需求</option>
                           <option value="硬體">硬體報修</option>
@@ -241,24 +333,24 @@ function CustomerFormDrawer({
                             const newList = formData.specialRequirements.filter((_: any, i: number) => i !== idx);
                             setFormData({ ...formData, specialRequirements: newList });
                           }}
-                          className="ml-auto text-rose-300 hover:text-rose-500 transition-colors"
+                          className="ml-auto text-[#B0ADA6] hover:text-[#B4483C] transition-colors text-[13px] px-1"
                         >✕</button>
                       </div>
                       <textarea 
-                        placeholder="請輸入詳細需求內容..."
+                        placeholder="輸入詳細需求內容"
                         value={req.content}
                         onChange={e => {
                           const newList = [...formData.specialRequirements];
                           newList[idx].content = e.target.value;
                           setFormData({ ...formData, specialRequirements: newList });
                         }}
-                        className="w-full bg-slate-50 border-none rounded-xl p-4 text-sm outline-none min-h-[100px] font-medium text-slate-700 placeholder:text-slate-300 focus:ring-2 focus:ring-indigo-100 transition-all text-slate-800"
+                        className="w-full bg-white border border-[#E8E6E1] rounded-lg p-3 text-[13px] outline-none min-h-[88px] text-[#1A1A18] placeholder:text-[#C4C1B9] focus:border-[#B0ADA6] transition-colors leading-relaxed"
                       />
                     </div>
                   ))
                 ) : (
-                  <div className="text-center py-20 bg-white/50 rounded-3xl border-2 border-dashed border-slate-200">
-                    <p className="text-slate-400 text-sm font-bold italic">目前尚無紀錄</p>
+                  <div className="py-16 text-center border border-dashed border-[#E0DDD6] rounded-lg">
+                    <p className="text-[12px] text-[#A5A29B]">尚無需求紀錄</p>
                   </div>
                 )}
               </div>
@@ -266,22 +358,35 @@ function CustomerFormDrawer({
           )}
         </div>
 
-        <footer className="p-8 bg-white border-t border-slate-100 flex gap-4 text-slate-800">
+        <footer className="px-8 py-5 border-t border-[#E8E6E1] bg-white flex items-center gap-4 shrink-0">
+          {/* 刪除是不可逆操作，降級成文字連結，不與儲存爭奪視覺重量 */}
           {!isCreate && (
             <button 
               type="button"
               onClick={() => {
-                if (window.confirm("🚨 警告：確定要永久刪除此客戶主檔嗎？\n刪除後，相關看板（辦公室/活動/質晑所課程）的資料連結將會失效且無法復原。")) {
+                if (window.confirm(`確定要永久刪除「${formData.companyName}」這筆客戶主檔嗎？\n\n刪除後各看板的資料連結會失效，此動作無法復原。`)) {
                   (onClose as any)('DELETE', item?.id); 
                 }
               }}
-              className="px-6 py-4 rounded-2xl font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 transition-all text-xs"
+              className="text-[12px] text-[#A5A29B] hover:text-[#B4483C] transition-colors shrink-0"
             >
               刪除客戶
             </button>
           )}
-          <button onClick={() => onClose()} className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">取消</button>
-          <button onClick={() => onSave(formData as Customer)} className="flex-[2] px-6 py-4 rounded-2xl font-black text-white bg-slate-900 hover:bg-black shadow-xl transition-all">確認並儲存資料</button>
+          <div className="ml-auto flex gap-2">
+            <button
+              onClick={() => onClose()}
+              className="px-5 py-3 rounded-lg text-[13px] font-medium text-[#3A3833] border border-[#E0DDD6] hover:border-[#B0ADA6] transition-colors"
+            >
+              取消
+            </button>
+            <button
+              onClick={() => onSave(formData as Customer)}
+              className="bg-[#1A1A18] text-white px-8 py-3 rounded-lg text-[13px] font-medium hover:bg-black transition-colors"
+            >
+              儲存
+            </button>
+          </div>
         </footer>
       </div>
     </div>
@@ -368,7 +473,6 @@ export default function CustomerManagementPage() {
       
       setSelectedCustomer(null);
       setIsCreating(false);
-      alert("資料已成功同步更新！");
       
     } catch (error) {
       console.error("儲存失敗:", error);
@@ -381,7 +485,6 @@ export default function CustomerManagementPage() {
       await deleteDoc(doc(db, "members", id));
       setSelectedCustomer(null);
       setIsCreating(false);
-      alert("客戶主檔已永久刪除。");
     } catch (error) {
       console.error("刪除失敗:", error);
       alert("刪除失敗，請檢查網路連線或權限設定。");
@@ -399,112 +502,167 @@ export default function CustomerManagementPage() {
     });
   }, [searchQuery, selectedTag, customers]);
 
-  const getTagStyle = (tag: string, isActive: boolean = false) => {
-    const isOffice = ["辦公室出租", "辦公室管理", "辦公室案件"].includes(tag);
-    if (isOffice) {
-      return isActive 
-        ? "bg-blue-600 text-white border-blue-600 shadow-blue-100" 
-        : "bg-blue-50 text-blue-600 border-blue-100 hover:bg-blue-100";
-    }
-    switch (tag) {
-      case "活動管理":
-        return isActive 
-          ? "bg-purple-600 text-white border-purple-600 shadow-purple-100" 
-          : "bg-purple-50 text-purple-600 border-purple-100 hover:bg-purple-100";
-      case "質晑所課程":
-        return isActive 
-          ? "bg-amber-500 text-white border-amber-500 shadow-amber-100" 
-          : "bg-amber-50 text-amber-600 border-amber-100 hover:bg-amber-100";
-      default:
-        return "bg-slate-50 text-slate-500 border-slate-100";
-    }
-  };
+  // 統編重複的筆數，作為資料品質的提示
+  const duplicateTaxIds = useMemo(() => {
+    const seen = new Map<string, number>();
+    customers.forEach(c => {
+      if (!c.taxId || c.taxId === "無統編") return;
+      seen.set(c.taxId, (seen.get(c.taxId) || 0) + 1);
+    });
+    return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([id]) => id));
+  }, [customers]);
 
-  if (!hasMounted || loading) return <div className="flex-1 h-screen flex items-center justify-center bg-slate-50 text-slate-400 font-bold text-slate-800 text-slate-800">載入中...</div>;
+  if (!hasMounted || loading) {
+    return (
+      <div className="flex-1 h-screen flex items-center justify-center text-[#A5A29B] text-[13px]" style={{ backgroundColor: "#F5F4F1" }}>
+        載入中…
+      </div>
+    );
+  }
 
   return (
-    <div className="flex-1 h-screen overflow-y-auto bg-slate-50/50 p-8 font-sans text-slate-800">
-      <div className="max-w-7xl mx-auto text-slate-800">
-        <header className="mb-10 flex justify-between items-end text-slate-800">
-          <div className="text-slate-800">
-            <h1 className="text-3xl font-black text-slate-800 tracking-tight underline decoration-blue-500/30">客戶資料管理</h1>
-            <p className="text-slate-400 mt-2 font-medium italic">集中管理跨產品線客戶全銜、窗口及財務主檔。</p>
+    <div className="flex-1 h-screen overflow-y-auto font-sans" style={{ backgroundColor: "#F5F4F1" }}>
+      <div className="max-w-6xl mx-auto px-8 py-10">
+        <header className="mb-8 flex justify-between items-start">
+          <div>
+            <h1 className="text-[22px] font-semibold text-[#1A1A18] tracking-tight">客戶資料管理</h1>
+            <p className="text-[11px] text-[#A5A29B] mt-1">集中管理跨產品線的客戶全銜與聯絡窗口</p>
           </div>
-          <button onClick={() => setIsCreating(true)} className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-black text-sm shadow-xl hover:bg-indigo-700 transition-all active:scale-95">＋ 新增客戶主檔</button>
+          <button
+            onClick={() => setIsCreating(true)}
+            className="bg-[#1A1A18] text-white px-5 py-2.5 rounded-lg text-[13px] font-medium hover:bg-black transition-colors"
+          >
+            新增客戶
+          </button>
         </header>
 
-        <div className="mb-8 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6 text-slate-800">
-          <div className="flex-1 w-full max-w-md relative text-slate-800">
-            <input type="text" placeholder="搜尋公司名稱或統編..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-4 focus:ring-blue-500/10 outline-none transition-all font-medium text-slate-800" />
-            <span className="absolute left-5 top-1/2 -translate-y-1/2 text-xl">🔍</span>
+        {duplicateTaxIds.size > 0 && (
+          <div className="mb-5 bg-white border-l-[3px] border-[#A97B22] ring-1 ring-[#E8E6E1] px-4 py-2.5 rounded-r-lg">
+            <p className="text-[12px] text-[#A97B22]">
+              有 {duplicateTaxIds.size} 組統編重複出現，同一家公司可能被建立成多筆資料
+            </p>
           </div>
-          
-          <div className="flex gap-3 text-slate-800">
-            {PRODUCT_TAGS.map(tag => (
-              <button 
-                key={tag} 
-                onClick={() => setSelectedTag(selectedTag === tag ? null : tag)} 
-                className={`px-6 py-3 rounded-2xl text-sm font-black transition-all border-2 shadow-sm active:scale-95 ${getTagStyle(tag, selectedTag === tag)}`}
-              >
-                {tag}
-              </button>
-            ))}
+        )}
+
+        <div className="mb-5 flex flex-col md:flex-row gap-3 md:items-center">
+          <input
+            type="text"
+            placeholder="搜尋公司名稱或統編"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="flex-1 max-w-sm bg-white border border-[#E8E6E1] rounded-lg px-4 py-2.5 text-[13px] outline-none transition-colors focus:border-[#B0ADA6] text-[#1A1A18] placeholder:text-[#C4C1B9]"
+          />
+
+          <div className="flex gap-1.5 items-center md:ml-auto">
+            {PRODUCT_TAGS.map(tag => {
+              const active = selectedTag === tag;
+              return (
+                <button 
+                  key={tag} 
+                  onClick={() => setSelectedTag(active ? null : tag)} 
+                  className={`px-3.5 py-2 rounded-lg text-[12px] font-medium border transition-all ${
+                    active
+                      ? "text-white border-transparent"
+                      : "bg-white text-[#8A8780] border-[#E0DDD6] hover:border-[#B0ADA6]"
+                  }`}
+                  style={active ? { backgroundColor: LINE_ACCENT[tag] } : undefined}
+                >
+                  {tag}
+                </button>
+              );
+            })}
             {selectedTag && (
-              <button onClick={() => setSelectedTag(null)} className="text-xs font-bold text-slate-400 hover:text-slate-600 px-2 transition-colors">清除篩選</button>
+              <button
+                onClick={() => setSelectedTag(null)}
+                className="text-[11px] text-[#A5A29B] hover:text-[#1A1A18] px-2 transition-colors"
+              >
+                清除
+              </button>
             )}
           </div>
         </div>
 
-        <div className="bg-white rounded-[32px] border border-slate-200 overflow-hidden shadow-sm text-slate-800">
-          <table className="w-full text-left text-slate-800">
-            <thead className="bg-slate-50/80 border-b border-slate-100 text-slate-800">
-              <tr className="text-slate-800">
-                <th className="px-8 py-6 font-black text-slate-500 text-xs uppercase tracking-widest">公司主體 / 統編</th>
-                <th className="px-8 py-6 font-black text-slate-500 text-xs uppercase tracking-widest">聯絡窗口</th>
-                <th className="px-8 py-6 font-black text-slate-500 text-xs uppercase tracking-widest">標籤</th>
-                <th className="px-8 py-6 font-black text-slate-500 text-xs uppercase tracking-widest text-center">操作</th>
+        <div className="bg-white rounded-lg border border-[#E8E6E1] overflow-hidden">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-[#E8E6E1]">
+                <th className="px-6 py-3.5 text-[10px] font-semibold text-[#A5A29B] tracking-[0.12em] uppercase">公司</th>
+                <th className="px-4 py-3.5 text-[10px] font-semibold text-[#A5A29B] tracking-[0.12em] uppercase">統編</th>
+                <th className="px-4 py-3.5 text-[10px] font-semibold text-[#A5A29B] tracking-[0.12em] uppercase">窗口</th>
+                <th className="px-4 py-3.5 text-[10px] font-semibold text-[#A5A29B] tracking-[0.12em] uppercase">產品線</th>
+                <th className="px-4 py-3.5" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50 text-slate-800">
-              {filtered.map(item => (
-                <tr key={item.id} className="hover:bg-slate-50/50 transition-colors group text-slate-800">
-                  <td className="px-8 py-8 text-slate-800">
-                    <div className="font-black text-slate-800 text-lg group-hover:text-blue-600 transition-colors">{item.companyName}</div>
-                    <div className="text-xs text-slate-400 font-mono mt-1 font-bold italic text-slate-400">TAX ID: {item.taxId}</div>
-                  </td>
-                  <td className="px-8 py-8 text-slate-800">
-                    <div className="text-slate-700 font-bold">{item.contactPerson}</div>
-                    <div className="text-xs text-slate-400 font-medium mt-1 text-slate-400">{item.phone}</div>
-                  </td>
-                  <td className="px-8 py-8 text-slate-800">
-                    <div className="flex gap-2 text-slate-800">
-                      {item.tags.length > 0 ? (
-                        Array.from(new Set(item.tags.map(t => 
-                          ["辦公室出租", "辦公室管理", "辦公室案件"].includes(t) ? "辦公室出租" : t
-                        ))).map(displayText => (
-                          <span 
-                            key={displayText} 
-                            className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase ${getTagStyle(displayText)}`}
-                          >
-                            {displayText}
+            <tbody>
+              {filtered.map(item => {
+                const isDup = duplicateTaxIds.has(item.taxId);
+                const lines = Array.from(new Set(item.tags.map(t => 
+                  ["辦公室出租", "辦公室管理", "辦公室案件"].includes(t) ? "辦公室出租" : t
+                ))).filter(t => PRODUCT_TAGS.includes(t));
+
+                return (
+                  <tr
+                    key={item.id}
+                    onClick={() => setSelectedCustomer(item)}
+                    className="border-t border-[#F0EEE9] hover:bg-[#FAFAF8] transition-colors cursor-pointer group"
+                  >
+                    <td className="px-6 py-4">
+                      <div className="text-[14px] font-medium text-[#1A1A18]">{item.companyName}</div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="text-[12px] text-[#8A8780] tabular-nums flex items-center gap-2">
+                        {item.taxId}
+                        {isDup && (
+                          <span className="text-[10px] text-[#A97B22] bg-[#FAF3E5] px-1.5 py-0.5 rounded">
+                            重複
                           </span>
-                        ))
-                      ) : (
-                        <span className="text-slate-300 text-xs italic text-slate-300">未分類</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-8 py-8 text-center text-slate-800">
-                    <button onClick={() => setSelectedCustomer(item)} className="bg-white border border-slate-200 text-slate-600 px-5 py-2.5 rounded-xl text-xs font-black hover:bg-slate-900 hover:text-white transition-all shadow-sm">查看詳情</button>
-                  </td>
-                </tr>
-              ))}
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="text-[13px] text-[#3A3833]">{item.contactPerson}</div>
+                      <div className="text-[11px] text-[#B0ADA6] mt-0.5">{item.phone}</div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="flex gap-1.5 flex-wrap">
+                        {lines.length > 0 ? (
+                          lines.map(t => (
+                            <span
+                              key={t}
+                              className="text-[10px] font-medium px-2 py-1 rounded"
+                              style={{
+                                backgroundColor: `${LINE_ACCENT[t]}14`,
+                                color: LINE_ACCENT[t],
+                              }}
+                            >
+                              {t}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[11px] text-[#C4C1B9]">未分類</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 text-right">
+                      <span className="text-[11px] text-[#C4C1B9] group-hover:text-[#8A8780] transition-colors">
+                        查看 →
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           {filtered.length === 0 && (
-            <div className="p-20 text-center text-slate-300 font-bold italic text-slate-300">找不到符合條件的客戶資料</div>
+            <div className="py-20 text-center">
+              <p className="text-[12px] text-[#A5A29B]">找不到符合條件的客戶</p>
+            </div>
           )}
         </div>
+
+        <p className="mt-4 text-[11px] text-[#B0ADA6]">
+          共 {filtered.length} 筆{selectedTag || searchQuery ? `（全部 ${customers.length} 筆）` : ""}
+        </p>
       </div>
 
       <CustomerFormDrawer 
@@ -520,6 +678,13 @@ export default function CustomerManagementPage() {
           }
         }} 
       />
+
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #D5D2CB; border-radius: 999px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #B0ADA6; }
+      `}</style>
     </div>
   );
 }

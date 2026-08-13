@@ -7,7 +7,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
-import { useSidebar } from "@/lib/sidebar-context";
 import {
   uploadRoomPhoto,
   deleteByUrl,
@@ -34,8 +33,11 @@ import {
   BUILDING_OPTIONS,
   AC_TYPE_LABEL,
   AC_TEMPLATE_PRESET,
+  AC_TEMPLATE_PRESET_EN,
   ROOM_STATUS_LABEL,
   ROOM_STATUS_STYLE,
+  daysUntilLeaseEnd,
+  leaseAlertLevel,
   currency,
   pricePerPing,
   suggestDiscountPrices,
@@ -45,20 +47,133 @@ import {
 
 type TabId = "floors" | "rooms";
 
+/* ============================================================
+   共用樣式：與看板、儀表板、週報使用同一套視覺語言
+   ============================================================ */
+const C = {
+  ink: "#1A1A18",
+  body: "#3A3833",
+  muted: "#8A8780",
+  faint: "#B0ADA6",
+  hairline: "#E8E6E1",
+  surface: "#FAFAF8",
+  page: "#F5F4F1",
+  accent: "#4E6A74",
+  success: "#4F7A52",
+  warn: "#A97B22",
+  danger: "#B4483C",
+};
+
 function RequiredLabel({ children }: { children: React.ReactNode }) {
   return (
-    <label className="text-xs font-bold text-slate-500 flex items-center gap-0.5 mb-1">
-      {children} <span className="text-red-500">*</span>
+    <label className="block text-[11px] font-medium text-[#8A8780] mb-1.5">
+      {children}
+      <span className="text-[#B4483C] ml-0.5">*</span>
     </label>
   );
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <label className="text-xs font-bold text-slate-500 block mb-1">{children}</label>;
+  return <label className="block text-[11px] font-medium text-[#8A8780] mb-1.5">{children}</label>;
 }
 
+/** 區塊標題：小字 eyebrow + 延伸細線，取代原本的彩色粗左邊框 */
+function SectionHead({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 mb-5">
+      <h3 className="text-[11px] font-semibold text-[#8A8780] tracking-[0.12em] uppercase shrink-0">
+        {children}
+      </h3>
+      <div className="h-px bg-[#E8E6E1] flex-1" />
+      {action}
+    </div>
+  );
+}
+
+// 欄位加淡底色讓邊界清楚，取代原本一整片浮動底線
 const inputClass =
-  "w-full border-b border-slate-200 py-2 text-sm outline-none focus:border-blue-600 text-slate-800 bg-transparent";
+  "w-full bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-3 py-2.5 text-[13px] text-[#1A1A18] outline-none transition-colors focus:bg-white focus:border-[#B0ADA6] placeholder:text-[#C4C1B9]";
+
+const readonlyClass =
+  "w-full bg-[#F0EEE9] border border-[#E8E6E1] rounded-lg px-3 py-2.5 text-[13px] text-[#8A8780] tabular-nums";
+
+/** 選項按鈕：館別、空調型式、語言等共用 */
+function ChoiceButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3.5 py-2 text-[12px] font-medium rounded-lg border transition-all ${
+        active
+          ? "bg-[#1A1A18] text-white border-[#1A1A18]"
+          : "bg-white text-[#8A8780] border-[#E0DDD6] hover:border-[#B0ADA6]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** 抽屜外框：標題列 + 內容 + 底部操作，兩個抽屜共用 */
+function DrawerShell({
+  eyebrow,
+  title,
+  onClose,
+  children,
+  footer,
+  maxWidth = "max-w-2xl",
+}: {
+  eyebrow: string;
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer: React.ReactNode;
+  maxWidth?: string;
+}) {
+  return (
+    <div className="fixed inset-0 z-[300] flex justify-end font-sans">
+      <div className="absolute inset-0 bg-[#1A1A18]/30 backdrop-blur-[2px]" onClick={onClose} />
+      <div
+        className={`relative w-full ${maxWidth} bg-white h-full shadow-[0_0_40px_rgba(0,0,0,0.12)] flex flex-col overflow-hidden`}
+      >
+        <header className="px-8 pt-7 pb-5 shrink-0 bg-white border-b border-[#E8E6E1]">
+          <div className="flex justify-between items-start">
+            <div className="min-w-0 pr-4">
+              <div className="text-[10px] font-semibold text-[#B0ADA6] tracking-[0.16em] uppercase mb-1.5">
+                {eyebrow}
+              </div>
+              <h2 className="text-[19px] font-semibold text-[#1A1A18] tracking-tight truncate">
+                {title}
+              </h2>
+            </div>
+            <button
+              onClick={onClose}
+              className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[#A5A29B] hover:bg-[#F5F4F1] hover:text-[#1A1A18] transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-8 py-8 space-y-10 custom-scrollbar bg-white">
+          {children}
+        </div>
+
+        <footer className="px-8 py-5 border-t border-[#E8E6E1] bg-white flex items-center gap-4 shrink-0">
+          {footer}
+        </footer>
+      </div>
+    </div>
+  );
+}
 
 /* ============================================================
    樓層編輯抽屜
@@ -91,6 +206,7 @@ function FloorDrawer({
       ...prev,
       acType,
       acTemplate: AC_TEMPLATE_PRESET[acType],
+      acTemplateEn: AC_TEMPLATE_PRESET_EN[acType],
       privateElectricRate: acType === "CENTRAL" ? 0 : 6.5,
     }));
   };
@@ -106,9 +222,11 @@ function FloorDrawer({
       const payload = {
         floorCode: code,
         floorName: form.floorName.trim(),
+        floorNameEn: (form.floorNameEn || "").trim(),
         building: form.building,
         acType: form.acType,
         acTemplate: form.acTemplate,
+        acTemplateEn: form.acTemplateEn || "",
         privateElectricRate: Number(form.privateElectricRate) || 0,
         sortOrder: Number(form.sortOrder) || 0,
         active: form.active,
@@ -142,155 +260,19 @@ function FloorDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex justify-end font-sans text-slate-800">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-xl bg-white h-full shadow-2xl flex flex-col overflow-hidden">
-        <header className="p-6 border-b flex justify-between items-center shrink-0">
-          <h2 className="text-xl font-bold">{isCreate ? "🆕 新增樓層" : "🏢 編輯樓層"}</h2>
-          <button onClick={onClose} className="text-slate-400 text-2xl hover:text-slate-600">
-            ✕
-          </button>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar">
-          <section className="space-y-4">
-            <h3 className="text-sm font-bold border-l-4 border-blue-600 pl-3 uppercase tracking-widest">
-              樓層基本資料
-            </h3>
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <RequiredLabel>樓層代碼</RequiredLabel>
-                <input
-                  value={form.floorCode}
-                  disabled={!isCreate}
-                  onChange={(e) => setForm({ ...form, floorCode: e.target.value.toUpperCase() })}
-                  className={`${inputClass} ${!isCreate ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                  placeholder="FL-21"
-                />
-                <p className="text-[10px] text-slate-400 mt-1 italic">
-                  {isCreate ? "建立後無法修改，房型會用它關聯" : "已被房型關聯，不可修改"}
-                </p>
-              </div>
-              <div>
-                <RequiredLabel>樓層名稱</RequiredLabel>
-                <input
-                  value={form.floorName}
-                  onChange={(e) => setForm({ ...form, floorName: e.target.value })}
-                  className={inputClass}
-                  placeholder="民權館 21 樓"
-                />
-              </div>
-              <div className="col-span-2">
-                <RequiredLabel>所屬館別</RequiredLabel>
-                <div className="flex flex-wrap gap-2">
-                  {BUILDING_OPTIONS.map((b) => (
-                    <button
-                      key={b}
-                      type="button"
-                      onClick={() => setForm({ ...form, building: b })}
-                      className={`px-4 py-2 text-xs font-bold rounded-xl border transition-all ${
-                        form.building === b
-                          ? "bg-slate-800 text-white border-slate-800"
-                          : "bg-white text-slate-500 border-slate-200"
-                      }`}
-                    >
-                      {b}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <FieldLabel>排序</FieldLabel>
-                <input
-                  type="number"
-                  value={form.sortOrder}
-                  onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) })}
-                  className={inputClass}
-                />
-              </div>
-              <div className="flex items-end pb-2">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.active}
-                    onChange={(e) => setForm({ ...form, active: e.target.checked })}
-                    className="w-5 h-5 accent-emerald-500"
-                  />
-                  <span className="text-xs font-bold text-slate-600">啟用中</span>
-                </label>
-              </div>
-            </div>
-          </section>
-
-          <section className="space-y-4">
-            <h3 className="text-sm font-bold border-l-4 border-amber-500 pl-3 uppercase tracking-widest">
-              空調與用電規則
-            </h3>
-            <div className="bg-amber-50/30 p-6 rounded-2xl border border-amber-100 space-y-6">
-              <div>
-                <RequiredLabel>空調型式</RequiredLabel>
-                <div className="flex gap-2">
-                  {(Object.keys(AC_TYPE_LABEL) as AcType[]).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => applyAcPreset(t)}
-                      className={`px-4 py-2 text-xs font-bold rounded-xl border transition-all ${
-                        form.acType === t
-                          ? "bg-amber-500 text-white border-amber-500"
-                          : "bg-white text-slate-500 border-slate-200"
-                      }`}
-                    >
-                      {AC_TYPE_LABEL[t]}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-slate-400 mt-2 italic">
-                  切換型式會重新帶入預設說明，下方文字仍可自行調整
-                </p>
-              </div>
-
-              <div>
-                <FieldLabel>私電單價（每度）</FieldLabel>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={form.privateElectricRate}
-                  onChange={(e) =>
-                    setForm({ ...form, privateElectricRate: Number(e.target.value) })
-                  }
-                  className="w-full border-b border-amber-200 py-2 text-sm font-bold bg-transparent outline-none"
-                />
-              </div>
-
-              <div>
-                <FieldLabel>提案文件顯示說明</FieldLabel>
-                <textarea
-                  rows={6}
-                  value={form.acTemplate}
-                  onChange={(e) => setForm({ ...form, acTemplate: e.target.value })}
-                  className="w-full border border-amber-200 rounded-xl p-4 text-sm leading-relaxed outline-none focus:border-amber-400 bg-white text-slate-700"
-                />
-                <p className="text-[10px] text-slate-400 mt-2 italic">
-                  一行一項，生成提案時會直接渲染到「空調與用電收費規則」欄位
-                </p>
-              </div>
-            </div>
-          </section>
-
-          {!isCreate && (
-            <div className="text-xs text-slate-400 bg-slate-50 p-4 rounded-xl border border-slate-100">
-              目前有 <span className="font-black text-slate-600">{roomCount}</span> 間房型掛在此樓層
-            </div>
-          )}
-        </div>
-
-        <footer className="p-6 border-t bg-slate-50 flex gap-4 shrink-0">
+    <DrawerShell
+      eyebrow={isCreate ? "New floor" : "Floor detail"}
+      title={isCreate ? "新增樓層" : form.floorName || "未命名樓層"}
+      onClose={onClose}
+      maxWidth="max-w-xl"
+      footer={
+        <>
+          {/* 刪除是不可逆操作，降級成文字連結，不與儲存爭奪視覺重量 */}
           {!isCreate && (
             <button
               type="button"
               onClick={handleDelete}
-              className="px-6 py-4 rounded-2xl font-bold border border-red-200 text-red-500 hover:bg-red-50"
+              className="text-[12px] text-[#A5A29B] hover:text-[#B4483C] transition-colors shrink-0"
             >
               刪除樓層
             </button>
@@ -299,13 +281,146 @@ function FloorDrawer({
             type="button"
             disabled={saving}
             onClick={handleSave}
-            className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-black transition-all disabled:opacity-50"
+            className="ml-auto bg-[#1A1A18] text-white px-8 py-3 rounded-lg text-[13px] font-medium hover:bg-black transition-colors disabled:opacity-50"
           >
-            {saving ? "儲存中…" : "儲存樓層"}
+            {saving ? "儲存中…" : "儲存"}
           </button>
-        </footer>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {/* ---------- 基本資料 ---------- */}
+      <section>
+        <SectionHead>樓層基本資料</SectionHead>
+        <div className="grid grid-cols-2 gap-x-5 gap-y-5">
+          <div>
+            <RequiredLabel>樓層代碼</RequiredLabel>
+            <input
+              value={form.floorCode}
+              disabled={!isCreate}
+              onChange={(e) => setForm({ ...form, floorCode: e.target.value.toUpperCase() })}
+              className={isCreate ? inputClass : `${readonlyClass} cursor-not-allowed`}
+              placeholder="FL-21"
+            />
+            <p className="text-[11px] text-[#B0ADA6] mt-1.5">
+              {isCreate ? "建立後無法修改，房型會用它關聯" : "已被房型關聯，不可修改"}
+            </p>
+          </div>
+          <div>
+            <RequiredLabel>樓層名稱</RequiredLabel>
+            <input
+              value={form.floorName}
+              onChange={(e) => setForm({ ...form, floorName: e.target.value })}
+              className={inputClass}
+              placeholder="民權館 21 樓"
+            />
+          </div>
+          <div className="col-span-2">
+            <FieldLabel>樓層名稱（英文）</FieldLabel>
+            <input
+              value={form.floorNameEn || ""}
+              onChange={(e) => setForm({ ...form, floorNameEn: e.target.value })}
+              className={inputClass}
+              placeholder="Minquan 21F　留空則英文提案沿用中文"
+            />
+          </div>
+          <div className="col-span-2">
+            <RequiredLabel>所屬館別</RequiredLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {BUILDING_OPTIONS.map((b) => (
+                <ChoiceButton
+                  key={b}
+                  active={form.building === b}
+                  onClick={() => setForm({ ...form, building: b })}
+                >
+                  {b}
+                </ChoiceButton>
+              ))}
+            </div>
+          </div>
+          <div>
+            <FieldLabel>排序</FieldLabel>
+            <input
+              type="number"
+              value={form.sortOrder}
+              onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) })}
+              className={`${inputClass} tabular-nums`}
+            />
+          </div>
+          <div className="flex items-end pb-2.5">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.active}
+                onChange={(e) => setForm({ ...form, active: e.target.checked })}
+                className="w-[18px] h-[18px] accent-[#1A1A18] cursor-pointer"
+              />
+              <span className="text-[13px] text-[#3A3833]">啟用中</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      {/* ---------- 空調與用電 ---------- */}
+      <section>
+        <SectionHead>空調與用電規則</SectionHead>
+        <div className="space-y-5">
+          <div>
+            <RequiredLabel>空調型式</RequiredLabel>
+            <div className="flex gap-1.5">
+              {(Object.keys(AC_TYPE_LABEL) as AcType[]).map((t) => (
+                <ChoiceButton key={t} active={form.acType === t} onClick={() => applyAcPreset(t)}>
+                  {AC_TYPE_LABEL[t]}
+                </ChoiceButton>
+              ))}
+            </div>
+            <p className="text-[11px] text-[#B0ADA6] mt-2">
+              切換型式會重新帶入預設說明，下方文字仍可自行調整
+            </p>
+          </div>
+
+          <div>
+            <FieldLabel>私電單價（每度）</FieldLabel>
+            <input
+              type="number"
+              step="0.1"
+              value={form.privateElectricRate}
+              onChange={(e) => setForm({ ...form, privateElectricRate: Number(e.target.value) })}
+              className={`${inputClass} tabular-nums`}
+            />
+          </div>
+
+          <div>
+            <FieldLabel>提案文件顯示說明</FieldLabel>
+            <textarea
+              rows={6}
+              value={form.acTemplate}
+              onChange={(e) => setForm({ ...form, acTemplate: e.target.value })}
+              className={`${inputClass} leading-relaxed`}
+            />
+            <p className="text-[11px] text-[#B0ADA6] mt-1.5">
+              一行一項，生成提案時會直接渲染到「空調與用電收費規則」欄位
+            </p>
+          </div>
+
+          <div>
+            <FieldLabel>提案文件顯示說明（英文）</FieldLabel>
+            <textarea
+              rows={5}
+              value={form.acTemplateEn || ""}
+              onChange={(e) => setForm({ ...form, acTemplateEn: e.target.value })}
+              placeholder="留空則英文提案沿用中文內容"
+              className={`${inputClass} leading-relaxed`}
+            />
+          </div>
+        </div>
+      </section>
+
+      {!isCreate && (
+        <p className="text-[12px] text-[#8A8780] bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-4 py-3">
+          目前有 <span className="font-semibold text-[#1A1A18] tabular-nums">{roomCount}</span> 間房型掛在此樓層
+        </p>
+      )}
+    </DrawerShell>
   );
 }
 
@@ -317,11 +432,13 @@ function RoomDrawer({
   isCreate,
   floors,
   onClose,
+  onDuplicate,
 }: {
   room: Room | null;
   isCreate: boolean;
   floors: Floor[];
   onClose: () => void;
+  onDuplicate?: (room: Room) => void;
 }) {
   const [form, setForm] = useState<Room>(emptyRoom());
   const [photos, setPhotos] = useState<string[]>([]);
@@ -375,6 +492,11 @@ function RoomDrawer({
     }
   };
 
+  // 封面決定比價表上顯示哪一張，把選中的照片移到第一順位即可
+  const handleSetCover = (url: string) => {
+    setPhotos((prev) => [url, ...prev.filter((u) => u !== url)]);
+  };
+
   const handleRemovePhoto = async (url: string) => {
     if (!confirm("確定移除這張照片？檔案會一併從雲端刪除。")) return;
     try {
@@ -403,12 +525,16 @@ function RoomDrawer({
         areaPing: Number(form.areaPing) || 0,
         capacityMax: Number(form.capacityMax) || 0,
         featureDesc: form.featureDesc || "",
+        featureDescEn: form.featureDescEn || "",
         priceBase: Number(form.priceBase) || 0,
         priceHalfYear: Number(form.priceHalfYear) || 0,
         priceYearly: Number(form.priceYearly) || 0,
         photoUrls: photos,
         status: form.status,
         availableFrom: form.availableFrom || "",
+        tenantName: form.tenantName || "",
+        leaseStartDate: form.leaseStartDate || "",
+        leaseEndDate: form.leaseEndDate || "",
         note: form.note || "",
         active: form.active,
         updatedAt: serverTimestamp(),
@@ -437,304 +563,398 @@ function RoomDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex justify-end font-sans text-slate-800">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col overflow-hidden">
-        <header className="p-6 border-b flex justify-between items-center shrink-0">
-          <h2 className="text-xl font-bold">{isCreate ? "🆕 新增房型" : "🚪 編輯房型"}</h2>
-          <button onClick={onClose} className="text-slate-400 text-2xl hover:text-slate-600">
-            ✕
-          </button>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar">
-          {/* 基本資料 */}
-          <section className="space-y-4">
-            <h3 className="text-sm font-bold border-l-4 border-blue-600 pl-3 uppercase tracking-widest">
-              房型基本資料
-            </h3>
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <RequiredLabel>房號</RequiredLabel>
-                <input
-                  value={form.roomNo}
-                  onChange={(e) => setForm({ ...form, roomNo: e.target.value })}
-                  className={inputClass}
-                  placeholder="2118"
-                />
-              </div>
-              <div>
-                <RequiredLabel>所屬樓層</RequiredLabel>
-                <select
-                  value={form.floorId}
-                  onChange={(e) => setForm({ ...form, floorId: e.target.value })}
-                  className={inputClass}
-                >
-                  <option value="">請選擇樓層</option>
-                  {floors.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.floorName}（{f.floorCode}）
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <FieldLabel>坪數</FieldLabel>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={form.areaPing || ""}
-                  onChange={(e) => setForm({ ...form, areaPing: Number(e.target.value) })}
-                  className={inputClass}
-                  placeholder="6.0"
-                />
-              </div>
-              <div>
-                <FieldLabel>建議可容納人數</FieldLabel>
-                <input
-                  type="number"
-                  value={form.capacityMax || ""}
-                  onChange={(e) => setForm({ ...form, capacityMax: Number(e.target.value) })}
-                  className={inputClass}
-                  placeholder="8"
-                />
-              </div>
-              <div className="col-span-2">
-                <FieldLabel>空間特色</FieldLabel>
-                <input
-                  value={form.featureDesc}
-                  onChange={(e) => setForm({ ...form, featureDesc: e.target.value })}
-                  className={inputClass}
-                  placeholder="長型（有圓柱）、雙面採光"
-                />
-              </div>
-            </div>
-
-            {linkedFloor && (
-              <div className="bg-amber-50/40 p-4 rounded-xl border border-amber-100">
-                <div className="text-[11px] font-bold text-amber-700 mb-2">
-                  自動帶入的空調與用電規則（來自 {linkedFloor.floorName}）
-                </div>
-                <pre className="text-[11px] text-slate-600 whitespace-pre-wrap leading-relaxed font-sans">
-                  {linkedFloor.acTemplate}
-                </pre>
-              </div>
-            )}
-          </section>
-
-          {/* 價格 */}
-          <section className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold border-l-4 border-emerald-500 pl-3 uppercase tracking-widest">
-                三段報價
-              </h3>
+    <DrawerShell
+      eyebrow={isCreate ? "New room" : "Room detail"}
+      title={isCreate ? "新增房型" : form.roomNo || "未命名房型"}
+      onClose={onClose}
+      footer={
+        <>
+          {/* 刪除是不可逆操作，降級成文字連結，不與儲存爭奪視覺重量 */}
+          {!isCreate && (
+            <>
               <button
                 type="button"
-                onClick={handleSuggest}
-                className="text-[10px] font-black bg-emerald-500 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-600"
+                onClick={handleDelete}
+                className="text-[12px] text-[#A5A29B] hover:text-[#B4483C] transition-colors shrink-0"
               >
-                依原價試算優惠
+                刪除房型
               </button>
-            </div>
-            <div className="bg-emerald-50/30 p-6 rounded-2xl border border-emerald-100 space-y-6">
-              <div className="grid grid-cols-3 gap-6">
-                <div>
-                  <FieldLabel>統一原價</FieldLabel>
-                  <input
-                    type="number"
-                    value={form.priceBase || ""}
-                    onChange={(e) => setForm({ ...form, priceBase: Number(e.target.value) })}
-                    className="w-full border-b border-emerald-200 py-2 text-sm font-bold bg-transparent outline-none"
-                    placeholder="19000"
-                  />
-                </div>
-                <div>
-                  <FieldLabel>半年繳月租</FieldLabel>
-                  <input
-                    type="number"
-                    value={form.priceHalfYear || ""}
-                    onChange={(e) => setForm({ ...form, priceHalfYear: Number(e.target.value) })}
-                    className="w-full border-b border-emerald-200 py-2 text-sm font-bold bg-transparent outline-none"
-                    placeholder="17500"
-                  />
-                </div>
-                <div>
-                  <FieldLabel>年繳月租</FieldLabel>
-                  <input
-                    type="number"
-                    value={form.priceYearly || ""}
-                    onChange={(e) => setForm({ ...form, priceYearly: Number(e.target.value) })}
-                    className="w-full border-b border-emerald-200 py-2 text-sm font-bold bg-transparent outline-none"
-                    placeholder="16500"
-                  />
-                </div>
-              </div>
-              <div className="pt-4 border-t border-emerald-100 grid grid-cols-2 gap-4 text-xs">
-                <div className="flex justify-between">
-                  <span className="font-bold text-slate-400">每坪單價</span>
-                  <span className="font-black text-emerald-700">
-                    {currency(pricePerPing(form.priceBase, form.areaPing))} / 坪
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-bold text-slate-400">年繳共省</span>
-                  <span className="font-black text-emerald-700">
-                    {currency((form.priceBase - form.priceYearly) * 12)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* 狀態與照片 */}
-          <section className="space-y-4">
-            <h3 className="text-sm font-bold border-l-4 border-slate-400 pl-3 uppercase tracking-widest">
-              出租狀態與圖片
-            </h3>
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <FieldLabel>目前狀態</FieldLabel>
-                <select
-                  value={form.status}
-                  onChange={(e) => setForm({ ...form, status: e.target.value as RoomStatus })}
-                  className={inputClass}
-                >
-                  {(Object.keys(ROOM_STATUS_LABEL) as RoomStatus[]).map((s) => (
-                    <option key={s} value={s}>
-                      {ROOM_STATUS_LABEL[s]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <FieldLabel>預計可進駐日</FieldLabel>
-                <input
-                  type="date"
-                  value={form.availableFrom || ""}
-                  onChange={(e) => setForm({ ...form, availableFrom: e.target.value })}
-                  className={inputClass}
-                />
-              </div>
-              <div className="col-span-2">
-                <div className="flex justify-between items-center mb-2">
-                  <FieldLabel>房型照片</FieldLabel>
-                  <span className="text-[10px] font-bold text-slate-400">
-                    {photos.length} 張・自動壓縮至長邊 1600px
-                  </span>
-                </div>
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => handlePickPhotos(e.target.files)}
-                />
-
-                <button
-                  type="button"
-                  disabled={uploading}
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full py-6 rounded-2xl border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {uploading ? (
-                    <div className="px-8">
-                      <div className="text-xs font-bold text-blue-600 mb-2">
-                        上傳中 {progress}%
-                      </div>
-                      <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-blue-500 transition-all"
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="text-sm font-bold text-slate-600">＋ 選擇照片上傳</div>
-                      <div className="text-[10px] text-slate-400 mt-1">
-                        可一次選多張，單張上限 5MB
-                      </div>
-                    </>
-                  )}
-                </button>
-
-                {photos.length > 0 && (
-                  <div className="grid grid-cols-4 gap-3 mt-4">
-                    {photos.map((url, i) => (
-                      <div key={url} className="relative group">
-                        <img
-                          src={url}
-                          alt={`${form.roomNo} 照片 ${i + 1}`}
-                          className="h-24 w-full object-cover rounded-xl border border-slate-200 bg-slate-100"
-                        />
-                        {i === 0 && (
-                          <span className="absolute top-1.5 left-1.5 text-[9px] font-black bg-blue-600 text-white px-1.5 py-0.5 rounded">
-                            封面
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePhoto(url)}
-                          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/90 text-red-500 text-xs font-black shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <p className="text-[10px] text-slate-400 mt-2 italic">
-                  第一張會作為提案文件上的封面圖
-                </p>
-              </div>
-              <div className="col-span-2">
-                <FieldLabel>內部備註（不會出現在客戶提案）</FieldLabel>
-                <input
-                  value={form.note || ""}
-                  onChange={(e) => setForm({ ...form, note: e.target.value })}
-                  className={inputClass}
-                />
-              </div>
-              <div className="col-span-2">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.active}
-                    onChange={(e) => setForm({ ...form, active: e.target.checked })}
-                    className="w-5 h-5 accent-emerald-500"
-                  />
-                  <span className="text-xs font-bold text-slate-600">
-                    啟用中（停用後不會出現在提案的房號選單）
-                  </span>
-                </label>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <footer className="p-6 border-t bg-slate-50 flex gap-4 shrink-0">
-          {!isCreate && (
-            <button
-              type="button"
-              onClick={handleDelete}
-              className="px-6 py-4 rounded-2xl font-bold border border-red-200 text-red-500 hover:bg-red-50"
-            >
-              刪除房型
-            </button>
+              {/* 同層房間規格相近，複製後只要改房號與坪數，建檔會快很多 */}
+              <button
+                type="button"
+                onClick={() => onDuplicate?.(form)}
+                className="text-[12px] text-[#A5A29B] hover:text-[#1A1A18] transition-colors shrink-0"
+              >
+                複製此房型
+              </button>
+            </>
           )}
           <button
             type="button"
             disabled={saving}
             onClick={handleSave}
-            className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-black transition-all disabled:opacity-50"
+            className="ml-auto bg-[#1A1A18] text-white px-8 py-3 rounded-lg text-[13px] font-medium hover:bg-black transition-colors disabled:opacity-50"
           >
-            {saving ? "儲存中…" : "儲存房型"}
+            {saving ? "儲存中…" : "儲存"}
           </button>
-        </footer>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {/* ---------- 基本資料 ---------- */}
+      <section>
+        <SectionHead>房型基本資料</SectionHead>
+        <div className="grid grid-cols-2 gap-x-5 gap-y-5">
+          <div>
+            <RequiredLabel>房號</RequiredLabel>
+            <input
+              value={form.roomNo}
+              onChange={(e) => setForm({ ...form, roomNo: e.target.value })}
+              className={inputClass}
+              placeholder="2118"
+            />
+          </div>
+          <div>
+            <RequiredLabel>所屬樓層</RequiredLabel>
+            <select
+              value={form.floorId}
+              onChange={(e) => setForm({ ...form, floorId: e.target.value })}
+              className={inputClass}
+            >
+              <option value="">請選擇樓層</option>
+              {floors.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.floorName}（{f.floorCode}）
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <FieldLabel>坪數</FieldLabel>
+            <input
+              type="number"
+              step="0.1"
+              value={form.areaPing || ""}
+              onChange={(e) => setForm({ ...form, areaPing: Number(e.target.value) })}
+              className={`${inputClass} tabular-nums`}
+              placeholder="6.0"
+            />
+          </div>
+          <div>
+            <FieldLabel>建議可容納人數</FieldLabel>
+            <input
+              type="number"
+              value={form.capacityMax || ""}
+              onChange={(e) => setForm({ ...form, capacityMax: Number(e.target.value) })}
+              className={`${inputClass} tabular-nums`}
+              placeholder="8"
+            />
+          </div>
+          <div className="col-span-2">
+            <FieldLabel>空間特色</FieldLabel>
+            <input
+              value={form.featureDesc}
+              onChange={(e) => setForm({ ...form, featureDesc: e.target.value })}
+              className={inputClass}
+              placeholder="長型（有圓柱）、雙面採光"
+            />
+          </div>
+          <div className="col-span-2">
+            <FieldLabel>空間特色（英文）</FieldLabel>
+            <input
+              value={form.featureDescEn || ""}
+              onChange={(e) => setForm({ ...form, featureDescEn: e.target.value })}
+              className={inputClass}
+              placeholder="Long layout with pillar　留空則英文提案沿用中文"
+            />
+          </div>
+        </div>
+
+        {linkedFloor && (
+          <div className="mt-5 bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-4 py-3">
+            <div className="text-[11px] font-medium text-[#8A8780] mb-2">
+              自動帶入的空調與用電規則（來自 {linkedFloor.floorName}）
+            </div>
+            <pre className="text-[11px] text-[#5F5E5A] whitespace-pre-wrap leading-relaxed font-sans">
+              {linkedFloor.acTemplate}
+            </pre>
+          </div>
+        )}
+      </section>
+
+      {/* ---------- 三段報價 ---------- */}
+      <section>
+        <SectionHead
+          action={
+            <button
+              type="button"
+              onClick={handleSuggest}
+              className="shrink-0 text-[11px] font-medium px-3 py-1.5 rounded-lg border border-[#E0DDD6] text-[#3A3833] bg-white hover:border-[#B0ADA6] transition-colors"
+            >
+              依原價試算優惠
+            </button>
+          }
+        >
+          三段報價
+        </SectionHead>
+
+        <div className="grid grid-cols-3 gap-x-5 gap-y-5">
+          <div>
+            <FieldLabel>統一原價</FieldLabel>
+            <input
+              type="number"
+              value={form.priceBase || ""}
+              onChange={(e) => setForm({ ...form, priceBase: Number(e.target.value) })}
+              className={`${inputClass} tabular-nums`}
+              placeholder="19000"
+            />
+          </div>
+          <div>
+            <FieldLabel>半年繳月租</FieldLabel>
+            <input
+              type="number"
+              value={form.priceHalfYear || ""}
+              onChange={(e) => setForm({ ...form, priceHalfYear: Number(e.target.value) })}
+              className={`${inputClass} tabular-nums`}
+              placeholder="17500"
+            />
+          </div>
+          <div>
+            <FieldLabel>年繳月租</FieldLabel>
+            <input
+              type="number"
+              value={form.priceYearly || ""}
+              onChange={(e) => setForm({ ...form, priceYearly: Number(e.target.value) })}
+              className={`${inputClass} tabular-nums`}
+              placeholder="16500"
+            />
+          </div>
+        </div>
+
+        <div className="mt-5 bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-5 py-4 grid grid-cols-2 gap-4">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[12px] text-[#8A8780]">每坪單價</span>
+            <span className="text-[13px] font-semibold text-[#1A1A18] tabular-nums">
+              {currency(pricePerPing(form.priceBase, form.areaPing))} / 坪
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <span className="text-[12px] text-[#8A8780]">年繳共省</span>
+            <span className="text-[13px] font-semibold tabular-nums" style={{ color: C.success }}>
+              {currency((form.priceBase - form.priceYearly) * 12)}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {/* ---------- 出租狀態 ---------- */}
+      <section>
+        <SectionHead>出租狀態</SectionHead>
+        <div className="grid grid-cols-2 gap-x-5 gap-y-5">
+          <div>
+            <FieldLabel>目前狀態</FieldLabel>
+            <select
+              value={form.status}
+              onChange={(e) => setForm({ ...form, status: e.target.value as RoomStatus })}
+              className={inputClass}
+            >
+              {(Object.keys(ROOM_STATUS_LABEL) as RoomStatus[]).map((s) => (
+                <option key={s} value={s}>
+                  {ROOM_STATUS_LABEL[s]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <FieldLabel>預計可進駐日</FieldLabel>
+            <input
+              type="date"
+              value={form.availableFrom || ""}
+              onChange={(e) => setForm({ ...form, availableFrom: e.target.value })}
+              className={inputClass}
+            />
+          </div>
+        </div>
+
+        {/* 承租資訊：成交時由案件自動帶入，仍保留手動調整的空間 */}
+        <div className="mt-5 bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-5 py-4">
+          <div className="flex justify-between items-center mb-4">
+            <span className="text-[11px] font-semibold text-[#8A8780] tracking-[0.12em] uppercase">
+              承租資訊
+            </span>
+            {form.tenantSyncedAt && (
+              <span className="text-[11px] text-[#B0ADA6]">由案件自動同步</span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <FieldLabel>承租公司</FieldLabel>
+              <input
+                value={form.tenantName || ""}
+                onChange={(e) => setForm({ ...form, tenantName: e.target.value })}
+                placeholder="成交時自動帶入"
+                className="w-full bg-white border border-[#E8E6E1] rounded-lg px-3 py-2 text-[13px] text-[#1A1A18] outline-none focus:border-[#B0ADA6] transition-colors placeholder:text-[#C4C1B9]"
+              />
+            </div>
+            <div>
+              <FieldLabel>租約起日</FieldLabel>
+              <input
+                type="date"
+                value={form.leaseStartDate || ""}
+                onChange={(e) => setForm({ ...form, leaseStartDate: e.target.value })}
+                className="w-full bg-white border border-[#E8E6E1] rounded-lg px-3 py-2 text-[13px] text-[#1A1A18] outline-none focus:border-[#B0ADA6] transition-colors"
+              />
+            </div>
+            <div>
+              <FieldLabel>租約迄日</FieldLabel>
+              <input
+                type="date"
+                value={form.leaseEndDate || ""}
+                onChange={(e) => setForm({ ...form, leaseEndDate: e.target.value })}
+                className="w-full bg-white border border-[#E8E6E1] rounded-lg px-3 py-2 text-[13px] text-[#1A1A18] outline-none focus:border-[#B0ADA6] transition-colors"
+              />
+            </div>
+          </div>
+
+          {form.leaseEndDate &&
+            (() => {
+              const days = daysUntilLeaseEnd(form.leaseEndDate);
+              const level = leaseAlertLevel(form.leaseEndDate);
+              if (days === null) return null;
+              const tone =
+                level === "expired" ? C.danger : level === "expiring" ? C.warn : C.success;
+              return (
+                <div className="mt-3 text-[12px] font-medium" style={{ color: tone }}>
+                  {level === "expired"
+                    ? `租約已於 ${Math.abs(days)} 天前到期`
+                    : `距離租約到期還有 ${days} 天`}
+                </div>
+              );
+            })()}
+
+          {form.currentCaseId && (
+            <button
+              type="button"
+              onClick={() => window.open(`/cases?id=${form.currentCaseId}`, "_blank")}
+              className="mt-3 text-[12px] text-[#4E6A74] hover:underline"
+            >
+              查看關聯案件 →
+            </button>
+          )}
+        </div>
+      </section>
+
+      {/* ---------- 照片 ---------- */}
+      <section>
+        <SectionHead
+          action={
+            <span className="shrink-0 text-[11px] text-[#B0ADA6]">
+              {photos.length} 張・自動壓縮至長邊 1600px
+            </span>
+          }
+        >
+          房型照片
+        </SectionHead>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => handlePickPhotos(e.target.files)}
+        />
+
+        <button
+          type="button"
+          disabled={uploading}
+          onClick={() => fileInputRef.current?.click()}
+          className="w-full py-6 rounded-lg border border-dashed border-[#E0DDD6] hover:border-[#B0ADA6] hover:bg-[#FAFAF8] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {uploading ? (
+            <div className="px-8">
+              <div className="text-[12px] text-[#3A3833] mb-2 tabular-nums">上傳中 {progress}%</div>
+              <div className="h-1 bg-[#F0EEE9] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[#1A1A18] transition-all"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="text-[13px] font-medium text-[#3A3833]">選擇照片上傳</div>
+              <div className="text-[11px] text-[#B0ADA6] mt-1">可一次選多張，單張上限 5MB</div>
+            </>
+          )}
+        </button>
+
+        {photos.length > 0 && (
+          <div className="grid grid-cols-4 gap-3 mt-4">
+            {photos.map((url, i) => (
+              <div key={url} className="relative group">
+                <img
+                  src={url}
+                  alt={`${form.roomNo} 照片 ${i + 1}`}
+                  onClick={() => handleSetCover(url)}
+                  className={`h-24 w-full object-cover rounded-lg bg-[#F0EEE9] transition-all ${
+                    i === 0
+                      ? "ring-2 ring-[#1A1A18]"
+                      : "border border-[#E8E6E1] cursor-pointer hover:ring-2 hover:ring-[#B0ADA6]"
+                  }`}
+                />
+                {i === 0 ? (
+                  <span className="absolute top-1.5 left-1.5 text-[10px] font-medium bg-[#1A1A18] text-white px-2 py-0.5 rounded">
+                    封面
+                  </span>
+                ) : (
+                  <span className="absolute inset-x-1.5 bottom-1.5 text-[10px] text-white bg-[#1A1A18]/70 py-1 rounded text-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    設為封面
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleRemovePhoto(url)}
+                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/90 text-[#B4483C] text-xs shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-[11px] text-[#B0ADA6] mt-2.5">
+          封面會出現在提案的比價表，其餘照片會集中放在提案的空間實景區塊
+        </p>
+      </section>
+
+      {/* ---------- 內部設定 ---------- */}
+      <section>
+        <SectionHead>內部設定</SectionHead>
+        <div className="space-y-5">
+          <div>
+            <FieldLabel>內部備註（不會出現在客戶提案）</FieldLabel>
+            <input
+              value={form.note || ""}
+              onChange={(e) => setForm({ ...form, note: e.target.value })}
+              className={inputClass}
+            />
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.active}
+              onChange={(e) => setForm({ ...form, active: e.target.checked })}
+              className="w-[18px] h-[18px] accent-[#1A1A18] cursor-pointer"
+            />
+            <span className="text-[13px] text-[#3A3833]">
+              啟用中
+              <span className="text-[#B0ADA6] ml-2">停用後不會出現在提案的房號選單</span>
+            </span>
+          </label>
+        </div>
+      </section>
+    </DrawerShell>
   );
 }
 
@@ -743,7 +963,6 @@ function RoomDrawer({
    ============================================================ */
 export default function RoomMasterPage() {
   const router = useRouter();
-  const { width: sidebarWidth } = useSidebar();
 
   const [hasMounted, setHasMounted] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -804,7 +1023,16 @@ export default function RoomMasterPage() {
         (r.featureDesc || "").toLowerCase().includes(k)
       )) return false;
       if (floorFilter !== "全部" && r.floorId !== floorFilter) return false;
-      if (statusFilter !== "全部" && r.status !== statusFilter) return false;
+
+      // 「資料未填齊」與「即將到期」不是房間狀態而是計算出來的條件，
+      // 但業務找資料時想的是同一件事，所以放在同一個篩選裡
+      if (statusFilter === "INCOMPLETE") {
+        if (r.priceBase && r.areaPing) return false;
+      } else if (statusFilter === "EXPIRING") {
+        if (leaseAlertLevel(r.leaseEndDate) !== "expiring") return false;
+      } else if (statusFilter !== "全部" && r.status !== statusFilter) {
+        return false;
+      }
       return true;
     });
   }, [rooms, keyword, floorFilter, statusFilter]);
@@ -813,159 +1041,207 @@ export default function RoomMasterPage() {
     const available = rooms.filter((r) => r.status === "AVAILABLE" && r.active).length;
     const occupied = rooms.filter((r) => r.status === "OCCUPIED").length;
     const incomplete = rooms.filter((r) => !r.priceBase || !r.areaPing).length;
-    return { total: rooms.length, available, occupied, incomplete };
+    const expiring = rooms.filter((r) => leaseAlertLevel(r.leaseEndDate) === "expiring").length;
+    return { total: rooms.length, available, occupied, incomplete, expiring };
   }, [rooms]);
 
-  // 複製一筆房型作為新增草稿，同層房間規格相近，建檔會快很多
+  // 複製一筆房型作為新增草稿，同層房間規格相近，建檔會快很多。
+  // 從編輯抽屜按下時要一併清掉編輯狀態，否則兩個狀態並存會渲染錯的內容
   const handleDuplicate = (r: Room) => {
-    setDraftRoom({ ...r, id: "", roomNo: "", status: "AVAILABLE", currentCaseId: "" });
+    setDraftRoom({
+      ...r,
+      id: "",
+      roomNo: "",
+      status: "AVAILABLE",
+      currentCaseId: "",
+      tenantName: "",
+      leaseStartDate: "",
+      leaseEndDate: "",
+    });
+    setEditingRoom(null);
     setCreatingRoom(true);
   };
 
   if (!hasMounted || loading) {
     return (
-      <div className="h-screen flex items-center justify-center font-bold text-slate-400">
+      <div
+        className="h-screen flex items-center justify-center text-[13px] text-[#A5A29B]"
+        style={{ backgroundColor: C.page }}
+      >
         正在與雲端資料庫同步…
       </div>
     );
   }
 
+  const STAT_CARDS = [
+    { label: "房型總數", value: stats.total, color: C.ink, filter: "全部" },
+    { label: "可出租", value: stats.available, color: C.success, filter: "AVAILABLE" },
+    { label: "已出租", value: stats.occupied, color: C.faint, filter: "OCCUPIED" },
+    { label: "3個月內到期", value: stats.expiring, color: C.warn, filter: "EXPIRING" },
+    { label: "資料未填齊", value: stats.incomplete, color: C.danger, filter: "INCOMPLETE" },
+  ];
+
+  const hasFilter = !!keyword || floorFilter !== "全部" || statusFilter !== "全部";
+
   return (
     <div
-      style={{ left: sidebarWidth, transition: "left 200ms" }}
-      className="fixed inset-0 flex flex-col bg-slate-50/50 font-sans overflow-hidden text-slate-800"
+      style={{ backgroundColor: C.page }}
+      className="flex-1 h-screen overflow-y-auto custom-scrollbar font-sans text-slate-800"
     >
-      <header className="p-8 pb-0 shrink-0 bg-white border-b shadow-sm z-10">
-        <div className="flex justify-between items-center mb-6">
+      <header className="px-8 pt-8 bg-white border-b border-[#E8E6E1]">
+        <div className="flex justify-between items-start mb-5">
           <div>
-            <h1 className="text-2xl font-bold underline decoration-blue-500/30">房型資料維護</h1>
-            <p className="text-xs text-slate-400 mt-2">
+            <h1 className="text-[22px] font-semibold text-[#1A1A18] tracking-tight">房型資料維護</h1>
+            <p className="text-[11px] text-[#A5A29B] mt-1">
               帶看提案的比價表會直接讀取這裡的資料，價格與坪數請務必填寫正確
             </p>
           </div>
           <button
             onClick={() => (tab === "rooms" ? setCreatingRoom(true) : setCreatingFloor(true))}
-            className="bg-slate-900 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg hover:bg-black transition-all"
+            className="bg-[#1A1A18] text-white px-5 py-2.5 rounded-lg text-[13px] font-medium hover:bg-black transition-colors whitespace-nowrap"
           >
-            {tab === "rooms" ? "+ 新增房型" : "+ 新增樓層"}
+            {tab === "rooms" ? "新增房型" : "新增樓層"}
           </button>
         </div>
 
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          {[
-            { label: "房型總數", value: stats.total, color: "text-slate-800" },
-            { label: "可出租", value: stats.available, color: "text-emerald-600" },
-            { label: "已出租", value: stats.occupied, color: "text-slate-400" },
-            { label: "資料未填齊", value: stats.incomplete, color: "text-red-500" },
-          ].map((s) => (
-            <div key={s.label} className="bg-slate-50 rounded-xl border border-slate-200 px-4 py-3">
-              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                {s.label}
-              </div>
-              <div className={`text-2xl font-black mt-1 ${s.color}`}>{s.value}</div>
-            </div>
-          ))}
+        {/* 統計卡同時是篩選按鈕，點了直接看那批房間 */}
+        <div className="grid grid-cols-5 gap-3 mb-5">
+          {STAT_CARDS.map((s) => {
+            const isActive = statusFilter === s.filter;
+            return (
+              <button
+                key={s.label}
+                type="button"
+                onClick={() => {
+                  // 點總數等同清除，點同一張再按一次也回到全部
+                  setStatusFilter(isActive ? "全部" : s.filter);
+                  if (s.filter === "全部") {
+                    setKeyword("");
+                    setFloorFilter("全部");
+                  }
+                  setTab("rooms");
+                }}
+                className={`text-left rounded-lg border px-4 py-3 transition-all ${
+                  isActive
+                    ? "bg-white border-[#B0ADA6] ring-1 ring-[#E0DDD6]"
+                    : "bg-[#FAFAF8] border-[#E8E6E1] hover:border-[#D5D2CB] hover:bg-white"
+                }`}
+              >
+                <div className="text-[11px] text-[#8A8780] whitespace-nowrap">{s.label}</div>
+                <div
+                  className="text-[22px] font-semibold tabular-nums leading-none mt-2 tracking-tight"
+                  style={{ color: s.color }}
+                >
+                  {s.value}
+                </div>
+              </button>
+            );
+          })}
         </div>
 
-        <div className="flex gap-6 border-b border-slate-100">
+        <div className="flex gap-1 -mb-px">
           {([
             { id: "rooms", label: `辦公室房型（${rooms.length}）` },
             { id: "floors", label: `樓層環境（${floors.length}）` },
-          ] as { id: TabId; label: string }[]).map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`pb-3 px-1 text-sm font-bold transition-all ${
-                tab === t.id
-                  ? "text-blue-600 border-b-2 border-blue-600"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+          ] as { id: TabId; label: string }[]).map((t) => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`px-3.5 py-2.5 text-[13px] font-medium transition-colors relative ${
+                  active ? "text-[#1A1A18]" : "text-[#A5A29B] hover:text-[#3A3833]"
+                }`}
+              >
+                {t.label}
+                {active && (
+                  <span className="absolute left-3 right-3 -bottom-px h-[2px] bg-[#1A1A18] rounded-full" />
+                )}
+              </button>
+            );
+          })}
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 overflow-auto custom-scrollbar p-8">
+      <main className="px-8 py-6">
         {/* ---------- 房型清單 ---------- */}
         {tab === "rooms" && (
-          <div className="space-y-6">
-            <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-slate-200">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black text-slate-400 uppercase">搜尋</span>
-                <input
-                  value={keyword}
-                  onChange={(e) => setKeyword(e.target.value)}
-                  placeholder="房號 / 空間特色"
-                  className="px-2 py-1.5 border border-slate-200 rounded-lg text-xs w-44 outline-none focus:border-blue-400"
-                />
-              </div>
-              <div className="h-4 w-px bg-slate-200" />
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black text-slate-400 uppercase">樓層</span>
-                <select
-                  value={floorFilter}
-                  onChange={(e) => setFloorFilter(e.target.value)}
-                  className="px-2 py-1 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 w-40"
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 bg-white p-2 rounded-lg border border-[#E8E6E1]">
+              <input
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                placeholder="搜尋房號或空間特色"
+                className="px-3 py-1.5 bg-[#FAFAF8] border border-[#E8E6E1] rounded-md text-[12px] w-52 outline-none focus:bg-white focus:border-[#B0ADA6] transition-colors text-[#1A1A18] placeholder:text-[#C4C1B9]"
+              />
+              <select
+                value={floorFilter}
+                onChange={(e) => setFloorFilter(e.target.value)}
+                className="px-2.5 py-1.5 bg-white border border-[#E8E6E1] rounded-md text-[12px] font-medium text-[#3A3833] w-40 outline-none"
+              >
+                <option value="全部">全部樓層</option>
+                {floors.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.floorName}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="px-2.5 py-1.5 bg-white border border-[#E8E6E1] rounded-md text-[12px] font-medium text-[#3A3833] w-36 outline-none"
+              >
+                <option value="全部">全部狀態</option>
+                {(Object.keys(ROOM_STATUS_LABEL) as RoomStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {ROOM_STATUS_LABEL[s]}
+                  </option>
+                ))}
+                <option value="EXPIRING">3個月內到期</option>
+                <option value="INCOMPLETE">資料未填齊</option>
+              </select>
+              {hasFilter && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setKeyword("");
+                    setFloorFilter("全部");
+                    setStatusFilter("全部");
+                  }}
+                  className="text-[11px] text-[#A5A29B] hover:text-[#1A1A18] px-2 transition-colors"
                 >
-                  <option value="全部">全部樓層</option>
-                  {floors.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.floorName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="h-4 w-px bg-slate-200" />
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black text-slate-400 uppercase">狀態</span>
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="px-2 py-1 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 w-28"
-                >
-                  <option value="全部">全部狀態</option>
-                  {(Object.keys(ROOM_STATUS_LABEL) as RoomStatus[]).map((s) => (
-                    <option key={s} value={s}>
-                      {ROOM_STATUS_LABEL[s]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <span className="ml-auto text-[11px] font-bold text-slate-400">
-                顯示 {filteredRooms.length} / {rooms.length} 間
+                  清除篩選
+                </button>
+              )}
+              <span className="ml-auto text-[11px] text-[#B0ADA6] tabular-nums">
+                {filteredRooms.length} / {rooms.length} 間
               </span>
             </div>
 
             {floors.length === 0 ? (
-              <div className="py-24 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-white">
-                <p className="text-sm font-bold text-slate-500">請先建立樓層</p>
-                <p className="text-xs text-slate-400 mt-2">
+              <div className="py-20 text-center border border-dashed border-[#E0DDD6] rounded-lg bg-white">
+                <p className="text-[13px] font-medium text-[#3A3833]">請先建立樓層</p>
+                <p className="text-[12px] text-[#A5A29B] mt-2">
                   房型必須掛在樓層底下，才能帶出空調與電費規則
                 </p>
                 <button
                   onClick={() => setTab("floors")}
-                  className="mt-6 bg-slate-900 text-white px-6 py-2.5 rounded-xl text-xs font-bold"
+                  className="mt-5 bg-[#1A1A18] text-white px-5 py-2.5 rounded-lg text-[12px] font-medium"
                 >
                   前往樓層環境
                 </button>
               </div>
             ) : (
-              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                <table className="w-full text-sm">
+              <div className="bg-white rounded-lg border border-[#E8E6E1] overflow-hidden">
+                <table className="w-full text-sm table-fixed">
                   <thead>
-                    <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      <th className="text-left px-6 py-4">房號</th>
-                      <th className="text-left px-4 py-4">樓層</th>
-                      <th className="text-right px-4 py-4">坪數</th>
-                      <th className="text-right px-4 py-4">人數</th>
-                      <th className="text-left px-4 py-4">空間特色</th>
-                      <th className="text-right px-4 py-4">原價</th>
-                      <th className="text-right px-4 py-4">半年繳</th>
-                      <th className="text-right px-4 py-4">年繳</th>
-                      <th className="text-center px-4 py-4">狀態</th>
-                      <th className="px-4 py-4" />
+                    <tr className="border-b border-[#E8E6E1] text-xs font-medium text-[#8A8780] whitespace-nowrap">
+                      <th className="text-left px-5 py-3 w-[11%]">房號</th>
+                      <th className="text-left px-4 py-3 w-[14%]">樓層</th>
+                      <th className="text-right px-4 py-3 w-[12%]">坪數／人數</th>
+                      <th className="text-left px-4 py-3 w-[25%]">空間特色</th>
+                      <th className="text-right px-4 py-3 w-[16%]">報價</th>
+                      <th className="text-left px-5 py-3 w-[22%]">狀態與承租</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -976,60 +1252,100 @@ export default function RoomMasterPage() {
                         <tr
                           key={r.id}
                           onClick={() => setEditingRoom(r)}
-                          className={`border-t border-slate-100 hover:bg-blue-50/40 cursor-pointer transition-colors ${
+                          className={`border-t border-[#F0EEE9] hover:bg-[#FAFAF8] cursor-pointer transition-colors ${
                             !r.active ? "opacity-40" : ""
                           }`}
                         >
-                          <td className="px-6 py-4 font-black text-slate-800">
-                            {r.roomNo}
-                            {incomplete && (
-                              <span className="ml-2 text-[9px] font-black text-red-500 bg-red-50 px-1.5 py-0.5 rounded">
-                                待補
+                          <td className="px-5 py-4 align-top">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-[#1A1A18] whitespace-nowrap">
+                                {r.roomNo}
                               </span>
-                            )}
+                              {incomplete && (
+                                <span
+                                  className="text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0"
+                                  style={{ backgroundColor: "#FBF2F0", color: C.danger }}
+                                >
+                                  待補
+                                </span>
+                              )}
+                            </div>
                           </td>
-                          <td className="px-4 py-4 text-xs text-slate-500">
+                          <td className="px-4 py-4 text-[13px] text-[#8A8780] align-top">
                             {f?.floorName || (
-                              <span className="text-red-400 italic">樓層已刪除</span>
+                              <span style={{ color: C.danger }}>樓層已刪除</span>
                             )}
                           </td>
-                          <td className="px-4 py-4 text-right text-xs font-bold">
-                            {r.areaPing || "-"}
+                          {/* 坪數與人數合併，兩者都是空間規格且數字都很短 */}
+                          <td className="px-4 py-4 text-right align-top whitespace-nowrap">
+                            <div className="text-[13px] font-medium text-[#3A3833] tabular-nums">
+                              {r.areaPing ? `${r.areaPing} 坪` : "—"}
+                            </div>
+                            <div className="text-[11px] text-[#B0ADA6] mt-0.5 tabular-nums">
+                              {r.capacityMax ? `${r.capacityMax} 人` : "—"}
+                            </div>
                           </td>
-                          <td className="px-4 py-4 text-right text-xs font-bold">
-                            {r.capacityMax || "-"}
+                          <td className="px-4 py-4 text-[13px] text-[#8A8780] align-top">
+                            <div className="line-clamp-2">{r.featureDesc || "—"}</div>
                           </td>
-                          <td className="px-4 py-4 text-xs text-slate-500 max-w-[180px] truncate">
-                            {r.featureDesc || "-"}
+                          {/* 三段價格垂直排列：年繳最醒目、原價刪除線，省下兩個欄位的寬度 */}
+                          <td className="px-4 py-4 text-right align-top whitespace-nowrap">
+                            {r.priceYearly || r.priceBase ? (
+                              <>
+                                <div
+                                  className="text-[14px] font-semibold tabular-nums"
+                                  style={{ color: C.success }}
+                                >
+                                  {r.priceYearly ? currency(r.priceYearly) : "—"}
+                                </div>
+                                <div className="text-[11px] text-[#B0ADA6] mt-0.5 tabular-nums">
+                                  {r.priceHalfYear ? currency(r.priceHalfYear) : "—"}
+                                </div>
+                                {r.priceBase > 0 && r.priceBase !== r.priceYearly && (
+                                  <div className="text-[11px] text-[#C4C1B9] line-through tabular-nums">
+                                    {currency(r.priceBase)}
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-[13px] text-[#C4C1B9]">—</span>
+                            )}
                           </td>
-                          <td className="px-4 py-4 text-right text-xs font-bold text-slate-700">
-                            {r.priceBase ? currency(r.priceBase) : "-"}
-                          </td>
-                          <td className="px-4 py-4 text-right text-xs text-emerald-600 font-bold">
-                            {r.priceHalfYear ? currency(r.priceHalfYear) : "-"}
-                          </td>
-                          <td className="px-4 py-4 text-right text-xs text-emerald-700 font-black">
-                            {r.priceYearly ? currency(r.priceYearly) : "-"}
-                          </td>
-                          <td className="px-4 py-4 text-center">
+                          {/* 狀態與承租資訊合併：兩者講的是同一件事，分兩欄反而要左右對照 */}
+                          <td className="px-5 py-4 align-top">
                             <span
-                              className={`text-[10px] font-black px-2 py-1 rounded ${
+                              className={`inline-block text-[11px] font-medium px-2.5 py-1 rounded ${
                                 ROOM_STATUS_STYLE[r.status]
                               }`}
                             >
                               {ROOM_STATUS_LABEL[r.status]}
                             </span>
-                          </td>
-                          <td className="px-4 py-4 text-right">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDuplicate(r);
-                              }}
-                              className="text-[10px] font-black text-slate-400 hover:text-blue-600 px-2 py-1 rounded hover:bg-white"
-                            >
-                              複製
-                            </button>
+                            {r.tenantName && (
+                              <div className="text-xs text-[#3A3833] truncate mt-1.5">
+                                {r.tenantName}
+                              </div>
+                            )}
+                            {r.leaseEndDate &&
+                              (() => {
+                                const level = leaseAlertLevel(r.leaseEndDate);
+                                const days = daysUntilLeaseEnd(r.leaseEndDate);
+                                const tone =
+                                  level === "expired"
+                                    ? C.danger
+                                    : level === "expiring"
+                                    ? C.warn
+                                    : C.faint;
+                                return (
+                                  <div
+                                    className="text-[11px] mt-0.5 whitespace-nowrap tabular-nums"
+                                    style={{ color: tone }}
+                                  >
+                                    {r.leaseEndDate} 到期
+                                    {level === "expiring" && ` · 剩 ${days} 天`}
+                                    {level === "expired" && " · 已逾期"}
+                                  </div>
+                                );
+                              })()}
                           </td>
                         </tr>
                       );
@@ -1037,10 +1353,8 @@ export default function RoomMasterPage() {
                   </tbody>
                 </table>
                 {filteredRooms.length === 0 && (
-                  <div className="py-20 text-center">
-                    <p className="text-xs font-bold text-slate-400 italic">
-                      沒有符合條件的房型
-                    </p>
+                  <div className="py-16 text-center">
+                    <p className="text-[12px] text-[#A5A29B]">沒有符合條件的房型</p>
                   </div>
                 )}
               </div>
@@ -1050,62 +1364,62 @@ export default function RoomMasterPage() {
 
         {/* ---------- 樓層清單 ---------- */}
         {tab === "floors" && (
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-2 gap-4">
             {floors.map((f) => (
               <div
                 key={f.id}
                 onClick={() => setEditingFloor(f)}
-                className={`bg-white rounded-2xl border border-slate-200 p-6 cursor-pointer hover:ring-2 hover:ring-blue-400 transition-all ${
+                className={`bg-white rounded-lg border border-[#E8E6E1] px-5 py-4 cursor-pointer hover:border-[#D5D2CB] transition-colors ${
                   !f.active ? "opacity-40" : ""
                 }`}
               >
                 <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <div className="text-base font-black text-slate-800">{f.floorName}</div>
-                    <div className="text-[10px] font-mono text-slate-400 mt-1">{f.floorCode}</div>
+                  <div className="min-w-0">
+                    <div className="text-[15px] font-semibold text-[#1A1A18] truncate">
+                      {f.floorName}
+                    </div>
+                    <div className="text-[11px] font-mono text-[#B0ADA6] mt-0.5">{f.floorCode}</div>
                   </div>
                   <span
-                    className={`text-[10px] font-black px-2 py-1 rounded ${
-                      f.acType === "INDEPENDENT"
-                        ? "bg-blue-500 text-white"
-                        : "bg-slate-400 text-white"
-                    }`}
+                    className="text-[11px] font-medium px-2 py-1 rounded shrink-0"
+                    style={{
+                      backgroundColor: f.acType === "INDEPENDENT" ? "#EDF1F2" : "#F0EEE9",
+                      color: f.acType === "INDEPENDENT" ? C.accent : C.muted,
+                    }}
                   >
                     {AC_TYPE_LABEL[f.acType]}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2 mb-4">
-                  <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded border border-slate-200">
-                    {f.building}
-                  </span>
-                  <span className="text-[10px] font-bold text-slate-400">
-                    {roomCountByFloor.get(f.id) || 0} 間房型
-                  </span>
+                <div className="flex items-center gap-3 mb-3 text-[11px] text-[#8A8780]">
+                  <span>{f.building}</span>
+                  <span className="text-[#D5D2CB]">·</span>
+                  <span className="tabular-nums">{roomCountByFloor.get(f.id) || 0} 間房型</span>
                   {f.privateElectricRate > 0 && (
-                    <span className="text-[10px] font-bold text-amber-600">
-                      私電 ${f.privateElectricRate}/度
-                    </span>
+                    <>
+                      <span className="text-[#D5D2CB]">·</span>
+                      <span className="tabular-nums">私電 ${f.privateElectricRate}/度</span>
+                    </>
                   )}
                 </div>
 
-                <pre className="text-[11px] text-slate-500 whitespace-pre-wrap leading-relaxed font-sans bg-slate-50 p-3 rounded-lg border border-slate-100 line-clamp-4">
+                <pre className="text-[11px] text-[#8A8780] whitespace-pre-wrap leading-relaxed font-sans bg-[#FAFAF8] border border-[#F0EEE9] rounded-md px-3 py-2.5 line-clamp-4">
                   {f.acTemplate}
                 </pre>
               </div>
             ))}
 
             {floors.length === 0 && (
-              <div className="col-span-2 py-24 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-white">
-                <p className="text-sm font-bold text-slate-500">還沒有任何樓層</p>
-                <p className="text-xs text-slate-400 mt-2">
+              <div className="col-span-2 py-20 text-center border border-dashed border-[#E0DDD6] rounded-lg bg-white">
+                <p className="text-[13px] font-medium text-[#3A3833]">還沒有任何樓層</p>
+                <p className="text-[12px] text-[#A5A29B] mt-2">
                   先建立樓層與空調規則，再回到房型分頁建立房間
                 </p>
                 <button
                   onClick={() => setCreatingFloor(true)}
-                  className="mt-6 bg-slate-900 text-white px-6 py-2.5 rounded-xl text-xs font-bold"
+                  className="mt-5 bg-[#1A1A18] text-white px-5 py-2.5 rounded-lg text-[12px] font-medium"
                 >
-                  + 新增第一個樓層
+                  新增第一個樓層
                 </button>
               </div>
             )}
@@ -1131,6 +1445,7 @@ export default function RoomMasterPage() {
           room={creatingRoom ? draftRoom : editingRoom}
           isCreate={creatingRoom}
           floors={floors}
+          onDuplicate={handleDuplicate}
           onClose={() => {
             setEditingRoom(null);
             setCreatingRoom(false);
@@ -1145,15 +1460,14 @@ export default function RoomMasterPage() {
           width: 6px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
-          background: #f1f5f9;
+          background: transparent;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #cbd5e1;
+          background: #D5D2CB;
           border-radius: 999px;
-          border: 3px solid #f1f5f9;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #94a3b8;
+          background: #B0ADA6;
         }
       `}</style>
     </div>
