@@ -67,8 +67,8 @@ export const DOC_TEXT = {
     s4: "道騰能為您做的",
     painIntro: "除了辦公空間，針對您提及的營運需求，道騰生態圈可提供以下資源對接。",
 
-    gallery: "主推空間實景",
-    galleryOf: (roomNo: string) => `${roomNo} 空間照片`,
+    gallery: "空間實景",
+    galleryIntro: "以下為各空間的其他實景照片，比較表中呈現的為代表照。",
 
     sales: "承辦業務",
     confidential: "本提案為專屬報價，內容請勿轉載",
@@ -129,8 +129,9 @@ export const DOC_TEXT = {
     painIntro:
       "Beyond the workspace itself, our partner network can support the operational needs you mentioned.",
 
-    gallery: "Recommended space",
-    galleryOf: (roomNo: string) => `Photos of ${roomNo}`,
+    gallery: "Space photos",
+    galleryIntro:
+      "Additional photos of each space. The comparison table above shows one representative photo per unit.",
 
     sales: "Account manager",
     confidential: "This proposal is confidential and intended for the addressee only.",

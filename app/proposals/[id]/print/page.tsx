@@ -113,12 +113,12 @@ export default function ProposalPrintPage() {
 
   const taxLabel = p.taxIncluded ? T.taxIncluded : T.taxExcluded;
 
-  // 照片集取主推房型；沒有指定主推時退回第一間有多張照片的房型
-  const galleryRoom =
-    rooms.find((r) => r.isRecommended && (r.photoUrls?.length || 0) > 1) ||
-    rooms.find((r) => (r.photoUrls?.length || 0) > 1);
-  // 第一張已在比價表當封面，這裡只放其餘照片
-  const galleryPhotos = (galleryRoom?.photoUrls || []).slice(1, 5);
+  // 每間房各自成一個照片區塊，第一張已在比價表當封面，這裡只放其餘照片。
+  // 主推房型排最前面，客戶翻到這頁時先看到我們建議的空間。
+  const galleryGroups = rooms
+    .map((r) => ({ room: r, photos: (r.photoUrls || []).slice(1, 7) }))
+    .filter((g) => g.photos.length > 0)
+    .sort((a, b) => Number(b.room.isRecommended) - Number(a.room.isRecommended));
 
   return (
     <div id="print-root" className="print-root bg-slate-100 min-h-screen">
@@ -497,20 +497,36 @@ export default function ProposalPrintPage() {
           {/* ---------- 主推房型的其餘照片 ----------
               比價表每欄只有約 40mm 寬，塞多張照片會讓表格過高又看不清，
               因此表格只放封面，其餘照片集中在此區塊呈現 */}
-          {galleryRoom && galleryPhotos.length > 0 && (
-            <section className="mb-10 break-inside-avoid">
+          {galleryGroups.length > 0 && (
+            <section className="mb-10">
               <SectionTitle index="05">{T.gallery}</SectionTitle>
-              <p className="text-xs text-slate-500 mb-4">
-                {T.galleryOf(galleryRoom.roomNo)}
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                {galleryPhotos.map((url, i) => (
-                  <img
-                    key={i}
-                    src={url}
-                    alt={`${galleryRoom.roomNo} ${i + 2}`}
-                    className="w-full h-40 object-cover"
-                  />
+              <p className="text-xs text-slate-500 mb-5">{T.galleryIntro}</p>
+
+              <div className="space-y-6">
+                {galleryGroups.map(({ room, photos }) => (
+                  <div key={room.roomId} className="break-inside-avoid">
+                    <div className="flex items-baseline gap-2.5 mb-2.5 pb-1.5 border-b border-slate-200">
+                      <span className="text-sm font-bold text-slate-900">{room.roomNo}</span>
+                      <span className="text-[10px] text-slate-400">
+                        {pick(room.floorName, room.floorNameEn)}
+                      </span>
+                      {room.isRecommended && (
+                        <span className="text-[8px] font-black bg-amber-500 text-white px-1.5 py-0.5">
+                          {T.recommended}
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-3 gap-2.5">
+                      {photos.map((url, i) => (
+                        <img
+                          key={i}
+                          src={url}
+                          alt={`${room.roomNo} ${i + 2}`}
+                          className="w-full h-28 object-cover"
+                        />
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </section>

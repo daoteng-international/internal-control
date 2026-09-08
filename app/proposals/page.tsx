@@ -567,17 +567,17 @@ function ProposalEditor({
 
   const floorMap = useMemo(() => new Map(floors.map((f) => [f.id, f])), [floors]);
 
-  const toggleRoom = (room: Room) => {
-    const exists = form.rooms.find((r) => r.roomId === room.id);
-    if (exists) {
-      setForm({ ...form, rooms: form.rooms.filter((r) => r.roomId !== room.id) });
-      return;
-    }
-    if (form.rooms.length >= MAX_ROOMS) return;
-
+  /**
+   * 從母表建立房型快照。
+   * 提案存的是建立當下的規格與價格，母表日後調價不會回頭改動已送出的報價單，
+   * 否則客戶手上的文件會跟系統顯示的對不起來。
+   */
+  const buildRoomSnapshot = (
+    room: Room,
+    keep?: Partial<ProposalRoomItem>
+  ): ProposalRoomItem => {
     const f = floorMap.get(room.floorId);
-    // 快照母表當下的規格與價格，之後母表調價不影響已建立的提案
-    const item: ProposalRoomItem = {
+    return {
       roomId: room.id,
       roomNo: room.roomNo,
       floorId: room.floorId,
@@ -594,10 +594,71 @@ function ProposalEditor({
       acTemplateEn: f?.acTemplateEn || "",
       privateElectricRate: f?.privateElectricRate || 0,
       photoUrls: room.photoUrls || [],
-      isRecommended: false,
-      customNote: "",
+      // 業務手動輸入的內容不該被母表覆蓋
+      isRecommended: keep?.isRecommended ?? false,
+      customNote: keep?.customNote ?? "",
     };
-    setForm({ ...form, rooms: [...form.rooms, item] });
+  };
+
+  const toggleRoom = (room: Room) => {
+    const exists = form.rooms.find((r) => r.roomId === room.id);
+    if (exists) {
+      setForm({ ...form, rooms: form.rooms.filter((r) => r.roomId !== room.id) });
+      return;
+    }
+    if (form.rooms.length >= MAX_ROOMS) return;
+    setForm({ ...form, rooms: [...form.rooms, buildRoomSnapshot(room)] });
+  };
+
+  /**
+   * 比對提案快照與母表現值的落差。
+   * 只看會印在客戶文件上的欄位——業務可能沒發現母表調過價，
+   * 就直接把舊價格的提案寄出去了。
+   */
+  const roomDiffs = useMemo(() => {
+    const roomMap = new Map(rooms.map((r) => [r.id, r]));
+    return form.rooms
+      .map((item) => {
+        const latest = roomMap.get(item.roomId);
+        if (!latest) return { item, latest: null, changes: [] as string[] };
+
+        const changes: string[] = [];
+        const num = (label: string, a: number, b: number) => {
+          if ((a || 0) !== (b || 0)) changes.push(`${label} ${currency(a)} → ${currency(b)}`);
+        };
+        num("統一原價", item.priceBase, latest.priceBase);
+        num("半年繳", item.priceHalfYear, latest.priceHalfYear);
+        num("年繳", item.priceYearly, latest.priceYearly);
+
+        if ((item.areaPing || 0) !== (latest.areaPing || 0))
+          changes.push(`坪數 ${item.areaPing} → ${latest.areaPing}`);
+        if ((item.capacityMax || 0) !== (latest.capacityMax || 0))
+          changes.push(`人數 ${item.capacityMax} → ${latest.capacityMax}`);
+        if ((item.featureDesc || "") !== (latest.featureDesc || ""))
+          changes.push("空間特色已變更");
+        if ((item.photoUrls || []).join() !== (latest.photoUrls || []).join())
+          changes.push("照片已變更");
+
+        return { item, latest, changes };
+      })
+      .filter((d) => d.changes.length > 0 || d.latest === null);
+  }, [form.rooms, rooms, floorMap]);
+
+  /** 把所有有落差的房型重新從母表取值，保留主推設定與業務補充說明 */
+  const refreshAllRooms = () => {
+    if (!confirm("將以房型母表的最新資料更新這份提案的規格與價格。\n\n主推設定與補充說明會保留。確定更新嗎？")) return;
+    const roomMap = new Map(rooms.map((r) => [r.id, r]));
+    setForm({
+      ...form,
+      rooms: form.rooms.map((item) => {
+        const latest = roomMap.get(item.roomId);
+        if (!latest) return item;
+        return buildRoomSnapshot(latest, {
+          isRecommended: item.isRecommended,
+          customNote: item.customNote,
+        });
+      }),
+    });
   };
 
   const updateRoomItem = (roomId: string, patch: Partial<ProposalRoomItem>) => {
@@ -997,6 +1058,47 @@ function ProposalEditor({
             >
               專屬空間比價表
             </SectionHead>
+
+            {/* 母表調價後提案不會自動跟著變（快照設計），
+                但草稿階段通常希望用最新價格，因此偵測到落差時主動提示 */}
+            {roomDiffs.length > 0 && (
+              <div
+                className="mb-4 rounded-lg px-4 py-3.5"
+                style={{ backgroundColor: "#FAF3E5", border: "1px solid #EFE3C8" }}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-medium mb-1.5" style={{ color: C.warn }}>
+                      房型母表已變更，這份提案顯示的是建立當時的資料
+                    </div>
+                    <ul className="space-y-1">
+                      {roomDiffs.map((d) => (
+                        <li key={d.item.roomId} className="text-[11px] leading-relaxed" style={{ color: C.body }}>
+                          <span className="font-medium">{d.item.roomNo}</span>
+                          <span className="text-[#A5A29B] mx-1.5">·</span>
+                          {d.latest === null ? (
+                            <span style={{ color: C.danger }}>此房型已從母表刪除</span>
+                          ) : (
+                            d.changes.join("　")
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={refreshAllRooms}
+                    className="shrink-0 px-3.5 py-2 rounded-lg text-[12px] font-medium text-white transition-colors whitespace-nowrap"
+                    style={{ backgroundColor: C.warn }}
+                  >
+                    更新為最新
+                  </button>
+                </div>
+                <p className="text-[10px] mt-2.5" style={{ color: "#B99A5E" }}>
+                  已送出給客戶的提案請勿隨意更新，客戶手上的文件會與系統對不起來
+                </p>
+              </div>
+            )}
 
             {form.rooms.length === 0 ? (
               <div className="py-16 text-center border border-dashed border-[#E0DDD6] rounded-lg">
