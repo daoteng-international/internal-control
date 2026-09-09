@@ -626,9 +626,9 @@ function ProposalEditor({
         const num = (label: string, a: number, b: number) => {
           if ((a || 0) !== (b || 0)) changes.push(`${label} ${currency(a)} → ${currency(b)}`);
         };
-        num("統一原價", item.priceBase, latest.priceBase);
-        num("半年繳", item.priceHalfYear, latest.priceHalfYear);
-        num("年繳", item.priceYearly, latest.priceYearly);
+        num("年租/月繳", item.priceBase, latest.priceBase);
+        num("年租/半年繳", item.priceHalfYear, latest.priceHalfYear);
+        num("年繳/優惠", item.priceYearly, latest.priceYearly);
 
         if ((item.areaPing || 0) !== (latest.areaPing || 0))
           changes.push(`坪數 ${item.areaPing} → ${latest.areaPing}`);
@@ -1224,9 +1224,9 @@ function ProposalEditor({
                     ))}
 
                     {[
-                      { label: "統一原價", key: "priceBase" as const, strong: false },
-                      { label: "半年繳月租", key: "priceHalfYear" as const, strong: false },
-                      { label: "年繳月租", key: "priceYearly" as const, strong: true },
+                      { label: "年租/月繳", key: "priceBase" as const, strong: false },
+                      { label: "年租/半年繳", key: "priceHalfYear" as const, strong: false },
+                      { label: "年租/年繳優惠", key: "priceYearly" as const, strong: true },
                     ].map((row) => (
                       <tr key={row.label} className="border-t border-[#F0EEE9]">
                         <td className="px-5 py-3 text-[#8A8780] bg-[#FAFAF8] sticky left-0">
