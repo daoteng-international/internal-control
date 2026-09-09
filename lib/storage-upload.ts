@@ -58,28 +58,45 @@ export async function compressImage(
   return blob;
 }
 
-/** 把檔名整理成安全的字串，避免中文與空白造成路徑問題 */
-function safeFileName(original: string) {
+/**
+ * 把檔名整理成安全的字串，避免中文與空白造成路徑問題。
+ * 若已知實際的 contentType 就以它決定副檔名 ——
+ * PNG 經過壓縮會轉成 JPEG，沿用原副檔名會讓檔名與內容不符。
+ */
+function safeFileName(original: string, contentType?: string) {
   const dot = original.lastIndexOf(".");
-  const ext = dot >= 0 ? original.slice(dot).toLowerCase() : "";
+  let ext = dot >= 0 ? original.slice(dot).toLowerCase() : "";
+
+  if (contentType === "image/jpeg") ext = ".jpg";
+  else if (contentType === "image/png") ext = ".png";
+  else if (contentType === "image/gif") ext = ".gif";
+  else if (contentType === "image/webp") ext = ".webp";
+
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return `${stamp}${ext}`;
 }
 
 /**
  * 上傳檔案到指定資料夾。
+ *
+ * contentType 由呼叫端明確指定，不依賴 Blob 自帶的 type：
+ * canvas.toBlob() 產出的 Blob 在部分瀏覽器不會帶 type，
+ * 一旦 fallback 成 application/octet-stream，
+ * Storage 規則的 contentType.matches('image/.*') 就會擋下上傳。
+ *
  * @param folder 例如 `rooms/abc123` 或 `cases/xyz789`
  */
 export function uploadFile(
   folder: string,
   file: Blob,
   originalName: string,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  contentType?: string
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const path = `${folder}/${safeFileName(originalName)}`;
+    const path = `${folder}/${safeFileName(originalName, contentType)}`;
     const task = uploadBytesResumable(ref(storage, path), file, {
-      contentType: file.type || "application/octet-stream",
+      contentType: contentType || file.type || "application/octet-stream",
     });
 
     task.on(
@@ -114,7 +131,14 @@ export async function uploadRoomPhoto(
   if (compressed.size > MAX_IMAGE_BYTES) {
     throw new Error("圖片壓縮後仍超過 5MB，請改用較小的檔案");
   }
-  return uploadFile(`rooms/${roomScope}`, compressed, file.name, onProgress);
+
+  // 壓縮過的一律是 JPEG；原檔回傳時（GIF、或壓完更大）沿用原本的類型。
+  // 不能只讀 compressed.type —— 部分瀏覽器產出的 Blob 沒有 type，
+  // 會 fallback 成 application/octet-stream 而被 Storage 規則擋下。
+  const contentType =
+    compressed === (file as Blob) ? file.type : compressed.type || "image/jpeg";
+
+  return uploadFile(`rooms/${roomScope}`, compressed, file.name, onProgress, contentType);
 }
 
 /** 上傳案件附件：不壓縮，直接傳 */
@@ -126,7 +150,7 @@ export async function uploadCaseAttachment(
   if (file.size > MAX_FILE_BYTES) {
     throw new Error("檔案超過 20MB 上限");
   }
-  return uploadFile(`cases/${caseScope}`, file, file.name, onProgress);
+  return uploadFile(`cases/${caseScope}`, file, file.name, onProgress, file.type);
 }
 
 /**

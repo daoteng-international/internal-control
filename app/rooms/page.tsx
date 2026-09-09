@@ -699,7 +699,7 @@ function RoomDrawer({
 
         <div className="grid grid-cols-3 gap-x-5 gap-y-5">
           <div>
-            <FieldLabel>統一原價</FieldLabel>
+            <FieldLabel>年租/月繳</FieldLabel>
             <input
               type="number"
               value={form.priceBase || ""}
@@ -709,7 +709,7 @@ function RoomDrawer({
             />
           </div>
           <div>
-            <FieldLabel>半年繳月租</FieldLabel>
+            <FieldLabel>年租/半年繳</FieldLabel>
             <input
               type="number"
               value={form.priceHalfYear || ""}
@@ -719,7 +719,7 @@ function RoomDrawer({
             />
           </div>
           <div>
-            <FieldLabel>年繳月租</FieldLabel>
+            <FieldLabel>年租/年繳優惠</FieldLabel>
             <input
               type="number"
               value={form.priceYearly || ""}

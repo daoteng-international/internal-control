@@ -628,7 +628,7 @@ function ProposalEditor({
         };
         num("年租/月繳", item.priceBase, latest.priceBase);
         num("年租/半年繳", item.priceHalfYear, latest.priceHalfYear);
-        num("年繳/優惠", item.priceYearly, latest.priceYearly);
+        num("年租/年繳優惠", item.priceYearly, latest.priceYearly);
 
         if ((item.areaPing || 0) !== (latest.areaPing || 0))
           changes.push(`坪數 ${item.areaPing} → ${latest.areaPing}`);
