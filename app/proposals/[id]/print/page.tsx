@@ -18,6 +18,8 @@ import {
   formatDocDate,
   currency,
   withTax,
+  hasAnyOfferPrice,
+  selectedSummary,
 } from "@/lib/types/proposal";
 
 /* ---------- 小元件 ---------- */
@@ -115,6 +117,11 @@ export default function ProposalPrintPage() {
 
   // 每間房各自成一個照片區塊，第一張已在比價表當封面，這裡只放其餘照片。
   // 主推房型排最前面，客戶翻到這頁時先看到我們建議的空間。
+  // 客戶選定兩間以上時，比價表多一欄合計 —— 合租情境下客戶要看的是總額
+  const summary = selectedSummary(rooms);
+  // 選一間也要標記，客戶才知道限時價對應哪一間
+  const showCombined = !!summary;
+
   const galleryGroups = rooms
     .map((r) => ({ room: r, photos: (r.photoUrls || []).slice(1, 7) }))
     .filter((g) => g.photos.length > 0)
@@ -233,11 +240,19 @@ export default function ProposalPrintPage() {
                         r.isRecommended ? "bg-amber-50" : ""
                       }`}
                     >
-                      {r.isRecommended && (
-                        <div className="inline-block text-[8px] font-black bg-amber-500 text-white px-2 py-0.5 mb-1.5">
-                          {T.recommended}
-                        </div>
-                      )}
+                      <div className="flex gap-1 mb-1.5">
+                        {r.isRecommended && (
+                          <span className="inline-block text-[8px] font-black bg-amber-500 text-white px-2 py-0.5">
+                            {T.recommended}
+                          </span>
+                        )}
+                        {/* 合租情境下標出客戶要租的是哪幾間 */}
+                        {r.isSelected && (
+                          <span className="inline-block text-[8px] font-black bg-slate-900 text-white px-2 py-0.5">
+                            {T.selected}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-lg font-bold text-slate-900 leading-none">
                         {r.roomNo}
                       </div>
@@ -299,7 +314,7 @@ export default function ProposalPrintPage() {
                   {rooms.map((r) => (
                     <td
                       key={r.roomId}
-                      className={`py-2.5 pl-4 text-xs text-slate-500 line-through ${
+                      className={`py-2.5 pl-4 text-xs text-slate-500 ${
                         r.isRecommended ? "bg-amber-50/50" : ""
                       }`}
                     >
@@ -372,6 +387,67 @@ export default function ProposalPrintPage() {
                 )}
               </tbody>
             </table>
+
+            {/* 本案專案價：整份提案一組，不分房型。
+                只有業務勾選且填了金額才會出現，沒爭取到優惠的客戶完全看不到這一區。 */}
+            {hasAnyOfferPrice(p.specialOffer) && p.specialOffer && (
+              <div className="mt-6 border-2 border-slate-900">
+                <div className="bg-slate-900 text-white px-5 py-2.5">
+                  <div className="text-sm font-bold tracking-wide">
+                    {/* 自訂標題優先；沒填就用預設並帶出選定的房號，
+                        客戶才知道這個價格對應哪幾間 */}
+                    {p.specialOffer.label ||
+                      (summary ? T.offerTitleOf(summary.roomNos) : T.specialOffer)}
+                  </div>
+                </div>
+                <div className="px-5 py-4">
+                  {/* 三段平均分配版面；年省以「選定房型的標準價合計」為基準，
+                      一間就是那間、兩間就是加總，客戶才看得出限時價省了多少 */}
+                  <div className="grid grid-cols-3 gap-x-4">
+                    {[
+                      { v: p.specialOffer.monthly, label: T.offerMonthly, base: summary?.priceBase ?? 0 },
+                      { v: p.specialOffer.halfYear, label: T.offerHalf, base: summary?.priceHalfYear ?? 0 },
+                      { v: p.specialOffer.yearly, label: T.offerYear, base: summary?.priceYearly ?? 0 },
+                    ].map((f) => {
+                      const saved = f.base > 0 && f.v > 0 ? (f.base - f.v) * 12 : 0;
+                      return (
+                        <div key={f.label}>
+                          {f.v > 0 ? (
+                            <>
+                              <div className="text-[9px] font-bold text-red-400 tracking-widest mb-1">
+                                {f.label}
+                              </div>
+                              <div className="text-xl font-black text-red-600 leading-none">
+                                {currency(withTax(f.v, p.taxIncluded))}
+                              </div>
+                              {saved > 0 && (
+                                <div className="text-[9px] font-bold text-red-600 mt-1.5">
+                                  {T.saveYear} {currency(withTax(saved, p.taxIncluded))}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="text-[9px] text-slate-300">—</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* 明確寫出這個價格適用哪幾間 ——
+                      多間時避免客戶誤以為是單間價，單間時也讓客戶知道對應的是哪一間 */}
+                  {summary && (
+                    <p className="text-[10px] font-bold text-red-600 mt-3">
+                      {T.selectedNote(summary.roomNos, summary.count)}
+                    </p>
+                  )}
+                  {(isEn ? p.specialOffer.noteEn || p.specialOffer.note : p.specialOffer.note) && (
+                    <p className="text-[10px] text-slate-500 mt-3.5 pt-3 border-t border-slate-100 leading-relaxed">
+                      {isEn ? p.specialOffer.noteEn || p.specialOffer.note : p.specialOffer.note}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
 
             <p className="text-[9px] text-slate-400 mt-3">
               {T.priceFooter(taxLabel, formatDocDate(p.validUntil, isEn))}

@@ -39,6 +39,10 @@ import {
   emptyPaidAddOns,
   countPainPoints,
   ProposalLang,
+  SpecialOffer,
+  emptySpecialOffer,
+  hasAnyOfferPrice,
+  selectedSummary,
   buildMailDraft,
   buildMailtoUrl,
   buildGmailUrl,
@@ -557,6 +561,7 @@ function ProposalEditor({
       setForm({
         ...proposal,
         lang: proposal.lang || "en",
+        specialOffer: proposal.specialOffer || emptySpecialOffer(),
         guestEmail: proposal.guestEmail || "",
         freeBenefits: proposal.freeBenefits || emptyFreeBenefits(),
         paidAddOns: proposal.paidAddOns || emptyPaidAddOns(),
@@ -628,7 +633,7 @@ function ProposalEditor({
         };
         num("年租/月繳", item.priceBase, latest.priceBase);
         num("年租/半年繳", item.priceHalfYear, latest.priceHalfYear);
-        num("年租/年繳優惠", item.priceYearly, latest.priceYearly);
+        num("年租/年繳最優惠", item.priceYearly, latest.priceYearly);
 
         if ((item.areaPing || 0) !== (latest.areaPing || 0))
           changes.push(`坪數 ${item.areaPing} → ${latest.areaPing}`);
@@ -666,6 +671,23 @@ function ProposalEditor({
       ...form,
       rooms: form.rooms.map((r) => (r.roomId === roomId ? { ...r, ...patch } : r)),
     });
+  };
+
+  const updateOffer = (patch: Partial<SpecialOffer>) => {
+    setForm((prev) => ({
+      ...prev,
+      specialOffer: { ...(prev.specialOffer || emptySpecialOffer()), ...patch },
+    }));
+  };
+
+  // 客戶最終要租哪幾間。多間勾選時比價表會自動加總，供合租情境使用
+  const toggleSelected = (roomId: string) => {
+    setForm((prev) => ({
+      ...prev,
+      rooms: prev.rooms.map((r) =>
+        r.roomId === roomId ? { ...r, isSelected: !r.isSelected } : r
+      ),
+    }));
   };
 
   const setRecommended = (roomId: string) => {
@@ -794,6 +816,7 @@ function ProposalEditor({
   };
 
   const selectedIds = form.rooms.map((r) => r.roomId);
+  const summary = selectedSummary(form.rooms);
 
   return (
     <DrawerShell
@@ -1159,6 +1182,16 @@ function ProposalEditor({
                           >
                             {r.isRecommended ? "主推方案" : "設為主推"}
                           </button>
+                          {/* 客戶最終要租哪幾間。勾兩間以上時比價表會多出合計欄 */}
+                          <label className="flex items-center gap-1.5 mt-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={!!r.isSelected}
+                              onChange={() => toggleSelected(r.roomId)}
+                              className="w-3.5 h-3.5 accent-[#1A1A18] cursor-pointer"
+                            />
+                            <span className="text-[10px] text-[#8A8780]">客戶選定</span>
+                          </label>
                         </th>
                       ))}
                     </tr>
@@ -1226,7 +1259,7 @@ function ProposalEditor({
                     {[
                       { label: "年租/月繳", key: "priceBase" as const, strong: false },
                       { label: "年租/半年繳", key: "priceHalfYear" as const, strong: false },
-                      { label: "年租/年繳優惠", key: "priceYearly" as const, strong: true },
+                      { label: "年租/年繳最優惠", key: "priceYearly" as const, strong: true },
                     ].map((row) => (
                       <tr key={row.label} className="border-t border-[#F0EEE9]">
                         <td className="px-5 py-3 text-[#8A8780] bg-[#FAFAF8] sticky left-0">
@@ -1294,6 +1327,119 @@ function ProposalEditor({
               <p className="text-[11px] text-[#B0ADA6]">
                 * 目前以含稅金額顯示（原價 × 1.05），切換回未稅不會影響已儲存的原始數字
               </p>
+            )}
+
+            {/* 專案價屬於整份提案，不分房型 ——
+                客戶可能只租一間也可能兩間一起租，但成交價是一組數字。
+                未啟用時客戶端完全看不到這一區，避免沒爭取到優惠的客戶產生比較心理。 */}
+            {form.rooms.length > 0 && (
+              <div className="mt-5 bg-[#FAFAF8] border border-[#E8E6E1] rounded-lg px-5 py-4">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.specialOffer?.enabled || false}
+                    onChange={(e) => updateOffer({ enabled: e.target.checked })}
+                    className="w-[18px] h-[18px] accent-[#1A1A18] cursor-pointer"
+                  />
+                  <span className="text-[13px] font-medium text-[#1A1A18]">限時專案價</span>
+                  <span className="text-[11px] text-[#B0ADA6]">
+                    勾選後才會出現在提案文件與信件上
+                  </span>
+                </label>
+
+                {form.specialOffer?.enabled && (
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <FieldLabel>顯示標題</FieldLabel>
+                      <input
+                        value={form.specialOffer.label}
+                        onChange={(e) => updateOffer({ label: e.target.value })}
+                        placeholder={summary ? `限時專案價 · ${summary.roomNos}` : "限時專案價"}
+                        className={inputClass}
+                      />
+                      <p className="text-[11px] text-[#B0ADA6] mt-1.5">
+                        {summary
+                          ? `留空會顯示「限時專案價 · ${summary.roomNos}」`
+                          : "留空會顯示「限時專案價」；勾選客戶選定後會自動帶出房號"}
+                      </p>
+                    </div>
+
+                    {summary && (
+                      <div className="flex items-center justify-between gap-4 bg-white border border-[#E8E6E1] rounded-lg px-4 py-3">
+                        <div className="text-[11px] text-[#8A8780] leading-relaxed">
+                          客戶選定 <span className="font-medium text-[#1A1A18]">{summary.roomNos}</span>
+                          ，標準價{summary.count > 1 ? "合計" : ""}月繳 {currency(withTax(summary.priceBase, form.taxIncluded))}
+                          ／半年繳 {currency(withTax(summary.priceHalfYear, form.taxIncluded))}
+                          ／年繳 {currency(withTax(summary.priceYearly, form.taxIncluded))}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateOffer({
+                              monthly: summary.priceBase,
+                              halfYear: summary.priceHalfYear,
+                              yearly: summary.priceYearly,
+                            })
+                          }
+                          className="shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-medium text-[#3A3833] bg-white border border-[#E0DDD6] hover:border-[#B0ADA6] transition-colors whitespace-nowrap"
+                        >
+                          帶入合計金額
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-3 gap-4">
+                      {[
+                        { key: "monthly" as const, label: "年租/月繳" },
+                        { key: "halfYear" as const, label: "年租/半年繳" },
+                        { key: "yearly" as const, label: "年租/年繳最優惠" },
+                      ].map((f) => (
+                        <div key={f.key}>
+                          <FieldLabel>{f.label}</FieldLabel>
+                          <input
+                            type="number"
+                            value={form.specialOffer?.[f.key] || ""}
+                            onChange={(e) => updateOffer({ [f.key]: Number(e.target.value) })}
+                            placeholder="0"
+                            className={`${inputClass} tabular-nums`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-[#B0ADA6] -mt-1">
+                      留空或填 0 的段別不會出現在提案上
+                    </p>
+
+                    <div>
+                      <FieldLabel>附加條件</FieldLabel>
+                      <input
+                        value={form.specialOffer.note}
+                        onChange={(e) => updateOffer({ note: e.target.value })}
+                        placeholder="例如：本價格限 2026/09/30 前完成簽約"
+                        className={inputClass}
+                      />
+                    </div>
+
+                    {(form.lang || "en") === "en" && (
+                      <div>
+                        <FieldLabel>附加條件（英文）</FieldLabel>
+                        <input
+                          value={form.specialOffer.noteEn || ""}
+                          onChange={(e) => updateOffer({ noteEn: e.target.value })}
+                          placeholder="留空則英文提案沿用中文"
+                          className={inputClass}
+                        />
+                      </div>
+                    )}
+
+                    {!hasAnyOfferPrice(form.specialOffer) && (
+                      <p className="text-[11px]" style={{ color: C.warn }}>
+                        三個段別都還沒填金額，提案上不會顯示這一區
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </section>
 

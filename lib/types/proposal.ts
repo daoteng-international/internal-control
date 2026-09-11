@@ -40,8 +40,16 @@ export const DOC_TEXT = {
     feature: "空間特色",
     priceBase: "年租/月繳",
     priceHalf: "年租/半年繳",
-    priceYear: "年租/年繳優惠",
+    priceYear: "年租/年繳最優惠",
     saveYear: "年省",
+    specialOffer: "限時專案價",
+    offerMonthly:"年租/月繳",
+    offerHalf: "年租/半年繳",
+    offerYear: "年租/年繳最優惠",
+    offerTitleOf: (nos: string) => `限時專案價 · ${nos}`,
+    selectedNote: (nos: string, n: number) =>
+      n > 1 ? `本價格適用於 ${nos} 共 ${n} 間合租` : `本價格適用於 ${nos}`,
+    selected: "選定",
     acRule: "空調與用電",
     note: "備註",
     taxIncluded: "含稅",
@@ -102,6 +110,14 @@ export const DOC_TEXT = {
     priceHalf: "Semi-annual plan",
     priceYear: "Annual plan",
     saveYear: "Saves",
+    specialOffer: "Limited-time offer",
+    offerMonthly: "Monthly",
+    offerHalf: "Semi-annual",
+    offerYear: "Annual",
+    offerTitleOf: (nos: string) => `Limited-time offer · ${nos}`,
+    selectedNote: (nos: string, n: number) =>
+      n > 1 ? `Applies to ${nos} (${n} units leased together)` : `Applies to ${nos}`,
+    selected: "Selected",
     acRule: "AC & utilities",
     note: "Notes",
     taxIncluded: "tax included",
@@ -368,6 +384,19 @@ export function buildMailDraft(p: Proposal): MailDraft {
       "",
     ];
 
+    // 專案價放在方案摘要之後，客戶收到的信要跟 PDF 對得起來
+    const offer = p.specialOffer;
+    if (hasAnyOfferPrice(offer) && offer) {
+      lines.push(
+        `[${offer.label || "Limited-time offer"}]`,
+        ...(offer.monthly > 0 ? [`Monthly　${currency(withTax(offer.monthly, p.taxIncluded))}`] : []),
+        ...(offer.halfYear > 0 ? [`Semi-annual　${currency(withTax(offer.halfYear, p.taxIncluded))}`] : []),
+        ...(offer.yearly > 0 ? [`Annual　${currency(withTax(offer.yearly, p.taxIncluded))}`] : []),
+        ...(offer.noteEn || offer.note ? [offer.noteEn || offer.note] : []),
+        ""
+      );
+    }
+
     if (recommended) {
       const feature = recommended.featureDescEn || recommended.featureDesc;
       lines.push(
@@ -407,6 +436,19 @@ export function buildMailDraft(p: Proposal): MailDraft {
     ...roomLines,
     "",
   ];
+
+  // 專案價放在方案摘要之後，客戶收到的信要跟 PDF 對得起來
+  const offerZh = p.specialOffer;
+  if (hasAnyOfferPrice(offerZh) && offerZh) {
+    lines.push(
+      `【${offerZh.label || "限時專案價"}】`,
+      ...(offerZh.monthly > 0 ? [`年租/月繳　${currency(withTax(offerZh.monthly, p.taxIncluded))}`] : []),
+      ...(offerZh.halfYear > 0 ? [`年租/半年繳　${currency(withTax(offerZh.halfYear, p.taxIncluded))}`] : []),
+      ...(offerZh.yearly > 0 ? [`年租/年繳最優惠　${currency(withTax(offerZh.yearly, p.taxIncluded))}`] : []),
+      ...(offerZh.note ? [offerZh.note] : []),
+      ""
+    );
+  }
 
   if (recommended) {
     lines.push(
@@ -478,7 +520,65 @@ export interface ProposalRoomItem {
   privateElectricRate: number;
   photoUrls: string[]; // 快照當下的房型照片，第一張為封面
   isRecommended: boolean; // 主推方案，渲染時高亮
+  isSelected?: boolean; // 客戶確定要租的房型，多間勾選時會自動合計
   customNote: string; // 業務針對此房間的補充說明
+}
+
+/**
+ * 客戶選定的房型合計。
+ *
+ * 帶看四間、客戶挑兩間一起租是常見情況，
+ * 這時比價表的「擇一比較」語意不成立，需要一欄明確的合計數字。
+ * 沒有任何選定時回傳 null，比價表就維持原本的純比較形式。
+ */
+export function selectedSummary(rooms: ProposalRoomItem[]) {
+  const picked = (rooms || []).filter((r) => r.isSelected);
+  if (picked.length === 0) return null;
+
+  return {
+    rooms: picked,
+    count: picked.length,
+    // 價格加總只用於後台「帶入合計金額」，客戶端看到的是談定的限時價
+    priceBase: picked.reduce((sum, r) => sum + (r.priceBase || 0), 0),
+    priceHalfYear: picked.reduce((sum, r) => sum + (r.priceHalfYear || 0), 0),
+    priceYearly: picked.reduce((sum, r) => sum + (r.priceYearly || 0), 0),
+    roomNos: picked.map((r) => r.roomNo).join(" + "),
+  };
+}
+
+/**
+ * 這一單最終談定的價格，屬於整份提案而非個別房型。
+ *
+ * 客戶可能只租一間、也可能兩間一起租，但成交價是一組數字，
+ * 所以放在提案層級。未啟用時客戶端完全看不到這一列，
+ * 避免沒爭取到優惠的客戶產生比較心理。
+ */
+export interface SpecialOffer {
+  enabled: boolean;
+  label: string; // 表頭文字，例如「本案專案價」
+  monthly: number; // 年租/月繳
+  halfYear: number; // 年租/半年繳
+  yearly: number; // 年租/年繳最優惠
+  note: string; // 補充條件，例如「須於本月底前簽約」
+  noteEn?: string;
+}
+
+export function emptySpecialOffer(): SpecialOffer {
+  return {
+    enabled: false,
+    label: "",
+    monthly: 0,
+    halfYear: 0,
+    yearly: 0,
+    note: "",
+    noteEn: "",
+  };
+}
+
+/** 專案價實際有填任何一段才需要渲染，避免出現整列都是 0 的空白區 */
+export function hasAnyOfferPrice(o?: SpecialOffer) {
+  if (!o?.enabled) return false;
+  return (o.monthly || 0) > 0 || (o.halfYear || 0) > 0 || (o.yearly || 0) > 0;
 }
 
 export interface Proposal {
@@ -508,6 +608,7 @@ export interface Proposal {
   // --- 區塊二：比價表 ---
   rooms: ProposalRoomItem[];
   taxIncluded: boolean; // 預設 false（未稅）
+  specialOffer?: SpecialOffer; // 這一單談定的最終價格
 
   // --- 區塊三：加值服務與營運細則 ---
   freeBenefits: FreeBenefits;
@@ -570,6 +671,7 @@ export function emptyProposal(salesName: string): Proposal {
     visitDate: todayStr(),
     rooms: [],
     taxIncluded: false,
+    specialOffer: emptySpecialOffer(),
     freeBenefits: emptyFreeBenefits(),
     paidAddOns: emptyPaidAddOns(),
     painPoints: {},
