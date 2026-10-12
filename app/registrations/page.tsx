@@ -337,9 +337,22 @@ function DetailDrawer({ item, isCreate, onClose, onSave, currentUser, onDelete }
       if (!formData.startDate || !formData.endDate) return;
       const start = new Date(formData.startDate);
       const end = new Date(formData.endDate);
-      const diffTime = Math.abs(end.getTime() - start.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-      const calculatedMonths = Math.ceil(diffDays / 30); // 不足30天進位為一個月
+
+      // 合約月數改用「月份差」計算。
+      // 舊版用「30 天 = 1 個月」向上取整，滿一年是 365 天 → ceil(365/30) = 13，會多算一個月。
+      // 新版把「迄日 + 1 天」當成合約結束的隔天，再算與起日相差幾個整月，
+      // 只有真的還有剩餘天數才進位：
+      //   2026/10/01 ~ 2027/09/30 → 隔天 2027/10/01 → 整整 12 個月
+      //   2026/10/01 ~ 2027/03/31 → 隔天 2027/04/01 → 6 個月
+      //   2026/10/01 ~ 2026/10/31 → 隔天 2026/11/01 → 1 個月
+      //   2026/10/01 ~ 2026/10/15 → 不滿一個月，進位為 1 個月
+      //   2026/10/01 ~ 2026/11/15 → 1 個月又 15 天，進位為 2 個月
+      const endNext = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1);
+      let calculatedMonths =
+        (endNext.getFullYear() - start.getFullYear()) * 12 +
+        (endNext.getMonth() - start.getMonth());
+      if (endNext.getDate() > start.getDate()) calculatedMonths += 1;
+      if (calculatedMonths < 1) calculatedMonths = 1;
       
       const monthlyRent = formData.monthlyRent || 0;
       const taxMultiplier = formData.taxType === "應稅(5%)" ? 1.05 : 1;
